@@ -271,4 +271,62 @@ class ScreenshotTest {
     @Test fun onboardingFeatures() = shot("onboarding_features", dark = true) { FeaturesPage(active = true) }
 
     @Test fun onboardingPermission() = shot("onboarding_permission") { PermissionPage(Perm.Notifications, granted = false) {} }
+
+    @Test
+    fun insights() = shot("insights") {
+        val tb = 1_000_000_000_000L
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            com.karelisio.vigie.ui.home.TrafficCard(
+                com.karelisio.vigie.data.TrafficReport(
+                    month = "2026-10", tx = 7_840 * tb / 1000, rx = 1_210 * tb / 1000, quota = 10 * tb, pct = 78.4,
+                    projectedTx = 9_920 * tb / 1000, daysLeft = 3.4,
+                    history = listOf(5_100, 6_300, 10_400, 7_200, 6_900, 7_840).mapIndexed { i, tx ->
+                        com.karelisio.vigie.data.TrafficMonth("2026-%02d".format(5 + i), tx * tb / 1000, tx * tb / 6000)
+                    },
+                ),
+            )
+            com.karelisio.vigie.ui.home.TopCard(
+                consumers = listOf(
+                    com.karelisio.vigie.data.Consumer("aiostreams", 2.4, 18.0, 210L shl 20, 4L shl 30, 9L shl 30),
+                    com.karelisio.vigie.data.Consumer("comet", 0.8, 31.0, 145L shl 20, 2L shl 30, 3L shl 30),
+                    com.karelisio.vigie.data.Consumer("prowlarr", 0.4, 6.0, 180L shl 20, 300L shl 20, 120L shl 20),
+                    com.karelisio.vigie.data.Consumer("redis", 0.2, 1.0, 12L shl 20, 900L shl 20, 900L shl 20),
+                    com.karelisio.vigie.data.Consumer("vigie-agent", 0.4, 2.0, 9L shl 20, 50L shl 20, 80L shl 20),
+                    com.karelisio.vigie.data.Consumer("aiometadata", 0.3, 4.0, 98L shl 20, 1L shl 30, 2L shl 30),
+                ),
+                containers = containers, range = "24h", onRange = {}, onOpen = {},
+            )
+        }
+    }
+
+    @Test
+    fun report() = shot("report", dark = true) {
+        fun alert(h: Long, kind: String, title: String) = com.karelisio.vigie.data.Alert(h, now - h * 3_600_000, kind, "critical", "", title)
+        com.karelisio.vigie.ui.report.ReportContent(
+            report = com.karelisio.vigie.data.WeeklyReport(
+                from = now - 7 * 86_400_000L, to = now,
+                services = com.karelisio.vigie.data.ReportServices(
+                    uptime = 99.42, worst = com.karelisio.vigie.data.ServiceUptime("AIOMetadata", 98.37),
+                    list = listOf(
+                        com.karelisio.vigie.data.ServiceUptime("AIOMetadata", 98.37),
+                        com.karelisio.vigie.data.ServiceUptime("Comet", 99.9),
+                        com.karelisio.vigie.data.ServiceUptime("AIOStreams", 100.0),
+                    ),
+                ),
+                incidents = com.karelisio.vigie.data.ReportIncidents(
+                    total = 3,
+                    byKind = listOf(com.karelisio.vigie.data.IncidentKind("container", "conteneurs", 2), com.karelisio.vigie.data.IncidentKind("check", "services", 1)),
+                    recent = listOf(alert(5, "container", "flaresolverr est tombé"), alert(30, "check", "AIOMetadata ne répond plus"), alert(52, "container", "comet manque de mémoire")),
+                ),
+                containers = com.karelisio.vigie.data.ReportContainers(
+                    crashes = 2, restarts = 1,
+                    list = listOf(com.karelisio.vigie.data.ContainerIncidents("flaresolverr", 1, 0), com.karelisio.vigie.data.ContainerIncidents("comet", 1, 1)),
+                ),
+                updates = listOf("comet", "redis"),
+                disk = com.karelisio.vigie.data.ReportDisk(48.5, 97L shl 30, 200L shl 30, 1.3),
+                traffic = com.karelisio.vigie.data.ReportTraffic(310_000_000_000, 1_840_000_000_000, 7_840_000_000_000, 10_000_000_000_000, 78.4),
+            ),
+            error = null, containers = containers, diskThreshold = 90.0, onBack = {}, onRetry = {}, onContainer = {}, onUpdates = {},
+        )
+    }
 }

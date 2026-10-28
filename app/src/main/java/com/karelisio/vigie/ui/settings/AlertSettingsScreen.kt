@@ -66,6 +66,7 @@ import androidx.navigation.NavHostController
 import com.karelisio.vigie.appContainer
 import com.karelisio.vigie.data.AgentSettings
 import com.karelisio.vigie.data.ApiException
+import com.karelisio.vigie.data.versionAtLeast
 import com.karelisio.vigie.ui.components.EmptyState
 import com.karelisio.vigie.ui.components.SectionCard
 import com.karelisio.vigie.ui.components.cascade
@@ -109,6 +110,7 @@ class AlertSettingsViewModel : ViewModel() {
 fun AlertSettingsScreen(nav: NavHostController, vm: AlertSettingsViewModel = viewModel()) {
     val saved by vm.saved.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
+    val live by appContainer.repository.live.collectAsStateWithLifecycle()
     var draft by remember(saved) { mutableStateOf(saved) }
     var saving by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf<String?>(null) }
@@ -207,6 +209,11 @@ fun AlertSettingsScreen(nav: NavHostController, vm: AlertSettingsViewModel = vie
                                 s.oracleWatch,
                             ) { on -> haptics.toggle(on); draft = s.copy(oracleWatch = on) }
                         }
+                    }
+                    // Quota de trafic et rapport de la semaine : agent 0.4.0 et plus.
+                    if (versionAtLeast(live.agentVersion, 0, 4)) {
+                        item { TrafficQuotaCard(s, Modifier.cascade(3)) { draft = it } }
+                        item { WeeklyReportCard(s, Modifier.cascade(3)) { draft = it } }
                     }
                     item {
                         SectionCard(Modifier.cascade(3), title = "Mises à jour d'images") {

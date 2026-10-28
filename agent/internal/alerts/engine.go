@@ -572,7 +572,7 @@ func (e *Engine) NotifyJob(title, body string, ok bool) {
 	e.dispatch(Notification{Kind: "job", Severity: sev, Target: title, Title: title, Body: body}, ok, true)
 }
 
-// ---- Tâches périodiques : résumé des heures calmes, risque Oracle ----
+// ---- Tâches périodiques : résumé des heures calmes, quota de trafic, rapport hebdomadaire, risque Oracle ----
 
 func (e *Engine) periodic() {
 	minute := time.NewTicker(time.Minute)
@@ -585,6 +585,8 @@ func (e *Engine) periodic() {
 		case now := <-minute.C:
 			e.flushMaintenance(now)
 			e.flushQuiet(now)
+			e.evaluateTraffic(now)
+			e.weeklyReport(now)
 			if now.After(nextOracle) {
 				nextOracle = now.Add(time.Hour)
 				e.evaluateOracle()

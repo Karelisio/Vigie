@@ -66,11 +66,18 @@ CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, name TEXT NOT NULL, action TEXT NOT NULL, detail TEXT
 );
 CREATE INDEX IF NOT EXISTS events_name_ts ON events (name, ts);
+CREATE TABLE IF NOT EXISTS traffic (
+  month TEXT PRIMARY KEY, rx INTEGER NOT NULL DEFAULT 0, tx INTEGER NOT NULL DEFAULT 0, since INTEGER NOT NULL DEFAULT 0
+);
 `
 
 // migrations ajoute les colonnes apparues après la première version (erreurs « déjà présente » ignorées).
 var migrations = []string{
 	`ALTER TABLE check_results ADD COLUMN cert_expires INTEGER`,
+	`ALTER TABLE ctr_minute ADD COLUMN rx REAL`,
+	`ALTER TABLE ctr_minute ADD COLUMN tx REAL`,
+	`ALTER TABLE ctr_agg ADD COLUMN rx REAL`,
+	`ALTER TABLE ctr_agg ADD COLUMN tx REAL`,
 }
 
 func Open(dir string) (*Store, error) {

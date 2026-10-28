@@ -60,6 +60,11 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 | GET | `/api/v1/oracle` | risque de récupération Oracle Always Free : `applicable, risk (low/medium/high/unknown), days, cpu, mem, net, net_mbps, summary` |
 | GET | `/api/v1/images` | dernier résultat de la vérification des images, par conteneur |
 | POST | `/api/v1/images/check` | interroge les registres maintenant |
+| GET | `/api/v1/traffic` | trafic de l'hôte du mois en cours (heure locale) : `month`, `tx`, `rx`, `quota` (octets sortants autorisés, 0 sans quota), `pct`, `projected_tx` (sortant prévu en fin de mois au rythme actuel), `days_left`, `history[]` (`month, tx, rx`, 12 derniers mois) |
+| GET | `/api/v1/top?range=24h\|7d` | consommation des conteneurs présents sur la période : `name, cpu_avg, cpu_max` (%), `mem_avg` (octets), `rx_bytes, tx_bytes` |
+| GET | `/api/v1/report?days=7` | rapport de la période (1 à 7 jours) : `services` (`uptime` moyen, `worst`, `list[]`), `incidents` (`total`, `by_kind[]` : `kind, label, count`, `recent[]`), `containers` (`crashes`, `restarts`, `list[]`), `updates[]`, `disk` (`pct, used, total, change`), `traffic` (`rx, tx, month_tx, quota, month_pct`, absent sans historique), `oracle` (instances Oracle seulement) |
+
+Quota de trafic (`net_quota_tb`, `net_quota_alert`) : alerte `traffic` au seuil choisi (warning) puis à 100 % (critical), une fois par mois et par niveau. Rapport hebdomadaire (`weekly_report`) : notification `report` le dimanche à 19:00 (heure locale), une fois par semaine.
 
 ## Temps réel
 

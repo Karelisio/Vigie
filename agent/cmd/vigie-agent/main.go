@@ -25,6 +25,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/settings"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/system"
+	"github.com/karelisio/vigie/agent/internal/traffic"
 	"github.com/karelisio/vigie/agent/internal/updater"
 )
 
@@ -79,6 +80,13 @@ func run(log *slog.Logger) error {
 	mon.OnSystem = eng.OnSystem
 	mon.OnEvent = eng.OnEvent
 	mon.OnImageUpdates = eng.OnImageUpdates
+	meter := traffic.NewMeter(st)
+	mon.OnMinute = func(ts time.Time, s system.Snapshot) {
+		// Contexte indépendant : la dernière minute est aussi comptée à l'arrêt de l'agent.
+		if err := meter.Sample(context.Background(), ts, s.NetRxTotal, s.NetTxTotal); err != nil {
+			log.Warn("compteur de trafic", "erreur", err)
+		}
+	}
 	set.OnChange = func(s settings.Settings) {
 		mon.Broadcast("settings", s)
 		mon.Refresh()

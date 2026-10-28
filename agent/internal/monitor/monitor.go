@@ -116,6 +116,7 @@ type ctrAcc struct {
 	n        int
 	cpu, mem float64
 	memBytes float64
+	rx, tx   float64
 }
 
 type Monitor struct {
@@ -152,6 +153,8 @@ type Monitor struct {
 	OnSystem       func(system.Snapshot)
 	OnEvent        func(docker.Event)
 	OnImageUpdates func(names []string)
+	// OnMinute reçoit chaque minute le dernier instantané système (compteur de trafic mensuel).
+	OnMinute func(ts time.Time, s system.Snapshot)
 }
 
 func New(cfg *config.Config, dk *docker.Client, sys *system.Collector, st *store.Store, set *settings.Manager, log *slog.Logger) *Monitor {
@@ -334,6 +337,8 @@ func (m *Monitor) collectContainers(ctx context.Context) {
 		a.cpu += c.CPU
 		a.mem += c.MemPct
 		a.memBytes += float64(c.MemUsed)
+		a.rx += c.NetRx
+		a.tx += c.NetTx
 	}
 	for id := range m.inspect {
 		if !alive[id] {
@@ -557,6 +562,7 @@ func (m *Monitor) flush(ctx context.Context, ts time.Time) {
 	m.sysAcc = acc{}
 	ctr := m.ctrAcc
 	m.ctrAcc = map[string]*ctrAcc{}
+	snap := m.snapshot
 	m.mu.Unlock()
 	if a.n > 0 {
 		n := float64(a.n)
@@ -572,10 +578,13 @@ func (m *Monitor) flush(ctx context.Context, ts time.Time) {
 	samples := make([]store.CtrSample, 0, len(ctr))
 	for name, c := range ctr {
 		n := float64(c.n)
-		samples = append(samples, store.CtrSample{Name: name, TS: ts.UnixMilli(), CPU: c.cpu / n, Mem: c.mem / n, MemBytes: int64(c.memBytes / n)})
+		samples = append(samples, store.CtrSample{Name: name, TS: ts.UnixMilli(), CPU: c.cpu / n, Mem: c.mem / n, MemBytes: int64(c.memBytes / n), Rx: c.rx / n, Tx: c.tx / n})
 	}
 	if err := m.st.InsertCtr(ctx, samples); err != nil {
 		m.log.Warn("historique conteneurs", "erreur", err)
+	}
+	if m.OnMinute != nil {
+		m.OnMinute(ts, snap)
 	}
 }
 

@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.SendToMobile
+import androidx.compose.material.icons.rounded.Summarize
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AlertDialog
@@ -72,6 +73,7 @@ import androidx.navigation.NavHostController
 import com.karelisio.vigie.appContainer
 import com.karelisio.vigie.data.ServerInfo
 import com.karelisio.vigie.data.UserPrefs
+import com.karelisio.vigie.data.versionAtLeast
 import com.karelisio.vigie.ui.components.rememberHaptics
 import com.karelisio.vigie.ui.navigation.AboutRoute
 import com.karelisio.vigie.ui.navigation.AlertsRoute
@@ -251,6 +253,13 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
         }
         item { Row_(Icons.Rounded.Security, "Autorisations", "Notifications, caméra, batterie, installation") { nav.navigate(PermissionsRoute) } }
         item { Row_(Icons.Rounded.WarningAmber, "Alertes récentes", "Incidents des 30 derniers jours") { nav.navigate(AlertsRoute) } }
+        if (versionAtLeast(live.agentVersion, 0, 4)) {
+            item {
+                Row_(Icons.Rounded.Summarize, "Rapport de la semaine", "Disponibilité, incidents, plantages, disque et trafic") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.ReportRoute)
+                }
+            }
+        }
         item { Row_(Icons.AutoMirrored.Rounded.ListAlt, "Journal des actions", "Qui a démarré, arrêté ou redémarré quoi") { nav.navigate(AuditRoute) } }
         item { Section("Application") }
         item {

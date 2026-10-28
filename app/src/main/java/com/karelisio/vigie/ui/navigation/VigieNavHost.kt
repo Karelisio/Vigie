@@ -145,6 +145,7 @@ fun VigieNavHost(nav: NavHostController, start: Any, snackbar: SnackbarHostState
                         screen<AutoUpdateRoute> { com.karelisio.vigie.ui.settings.AutoUpdateScreen(nav) }
                         screen<AuditRoute> { AuditScreen(nav) }
                         screen<AboutRoute> { AboutScreen(nav) }
+                        screen<ReportRoute> { com.karelisio.vigie.ui.report.ReportScreen(nav) }
                     }
 
                     AnimatedVisibility(

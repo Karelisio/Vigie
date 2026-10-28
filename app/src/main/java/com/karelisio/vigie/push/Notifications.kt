@@ -74,6 +74,7 @@ object Notifications {
             data["check_id"]?.let { putExtra(EXTRA_CHECK, it) }
             data["url"]?.let { putExtra(EXTRA_SERVER_URL, it) }
             if (data["kind"] == "image") setData(android.net.Uri.parse("vigie://open/containers"))
+            if (data["kind"] == "report") setData(android.net.Uri.parse("vigie://open/report"))
         }
         val pi = PendingIntent.getActivity(
             context, key.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,

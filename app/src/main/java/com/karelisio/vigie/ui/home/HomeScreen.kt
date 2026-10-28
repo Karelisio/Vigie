@@ -76,11 +76,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.karelisio.vigie.appContainer
 import com.karelisio.vigie.data.Connection
+import com.karelisio.vigie.data.Consumer
 import com.karelisio.vigie.data.Fmt
 import com.karelisio.vigie.data.History
 import com.karelisio.vigie.data.Issue
 import com.karelisio.vigie.data.LiveState
 import com.karelisio.vigie.data.SysPoint
+import com.karelisio.vigie.data.TrafficReport
 import com.karelisio.vigie.ui.components.ChartPoint
 import com.karelisio.vigie.ui.components.CircularGauge
 import com.karelisio.vigie.ui.components.ConnectionBanner
@@ -119,12 +121,30 @@ class HomeViewModel : ViewModel() {
     val refreshing = _refreshing.asStateFlow()
     private val _oracle = MutableStateFlow<com.karelisio.vigie.data.OracleReport?>(null)
     val oracle = _oracle.asStateFlow()
+    private val _traffic = MutableStateFlow<TrafficReport?>(null)
+    val traffic = _traffic.asStateFlow()
+    private val _top = MutableStateFlow<List<Consumer>?>(null)
+    val top = _top.asStateFlow()
+    private val _topRange = MutableStateFlow("24h")
+    val topRange = _topRange.asStateFlow()
     var range = "24h"
         private set
 
     init {
         loadHistory("24h")
         loadOracle()
+        loadInsights()
+    }
+
+    /** Trafic du mois et top consommateurs (agent antérieur à 0.4.0 : rien n'est affiché). */
+    private fun loadInsights() {
+        viewModelScope.launch { runCatching { repo.traffic() }.onSuccess { _traffic.value = it } }
+        loadTop(_topRange.value)
+    }
+
+    fun loadTop(range: String) {
+        _topRange.value = range
+        viewModelScope.launch { runCatching { repo.top(range) }.onSuccess { _top.value = it } }
     }
 
     /** Rapport Oracle Always Free (ancien agent ou autre hébergeur : rien n'est affiché). */
@@ -143,6 +163,7 @@ class HomeViewModel : ViewModel() {
             repo.reconnect()
             runCatching { repo.systemHistory(range) }.onSuccess { _history.value = it }
             loadOracle()
+            loadInsights()
             delay(900)
             _refreshing.value = false
         }
@@ -152,8 +173,11 @@ class HomeViewModel : ViewModel() {
         appContainer.servers.setActive(id)
         _history.value = null
         _oracle.value = null
+        _traffic.value = null
+        _top.value = null
         loadHistory(range)
         loadOracle()
+        loadInsights()
     }
 }
 
@@ -178,6 +202,9 @@ fun HomeScreen(nav: NavHostController, vm: HomeViewModel = viewModel()) {
             snackbar.showSnackbar(msg)
         }
     }
+    val traffic by vm.traffic.collectAsStateWithLifecycle()
+    val top by vm.top.collectAsStateWithLifecycle()
+    val topRange by vm.topRange.collectAsStateWithLifecycle()
 
     RadarRefreshBox(isRefreshing = refreshing, onRefresh = vm::refresh, modifier = Modifier.fillMaxSize()) {
         HomeContent(
@@ -201,6 +228,11 @@ fun HomeScreen(nav: NavHostController, vm: HomeViewModel = viewModel()) {
             onMaintenance = if (state.v04) ({ maintenanceSheet = true }) else null,
             onStopMaintenance = { setMaintenance(0) },
             onCleanup = if (state.v04) ({ nav.navigate(com.karelisio.vigie.ui.navigation.CleanupRoute) }) else null,
+            traffic = traffic,
+            top = top,
+            topRange = topRange,
+            onTopRange = vm::loadTop,
+            onConsumer = { name -> nav.navigate(ContainerRoute(state.containers.firstOrNull { it.name == name }?.id ?: name, name)) },
         )
     }
 
@@ -226,6 +258,11 @@ internal fun HomeContent(
     onMaintenance: (() -> Unit)? = null,
     onStopMaintenance: () -> Unit = {},
     onCleanup: (() -> Unit)? = null,
+    traffic: TrafficReport? = null,
+    top: List<Consumer>? = null,
+    topRange: String = "24h",
+    onTopRange: (String) -> Unit = {},
+    onConsumer: (String) -> Unit = {},
 ) {
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 96.dp
     LazyColumn(
@@ -258,6 +295,12 @@ internal fun HomeContent(
             HistoryCard(history, range, state, onRange = onRange, modifier = Modifier.padding(horizontal = 16.dp).cascade(3))
         }
         item(key = "containers") { ContainersSummary(state, Modifier.padding(horizontal = 16.dp).cascade(4), onContainers) }
+        if (top != null) {
+            item(key = "top") {
+                TopCard(top, state.containers, topRange, onTopRange, onConsumer, Modifier.padding(horizontal = 16.dp).animateItem().cascade(5))
+            }
+        }
+        if (traffic != null) item(key = "traffic") { TrafficCard(traffic, Modifier.padding(horizontal = 16.dp).animateItem().cascade(6)) }
         if (oracle != null) item(key = "oracle") { OracleCard(oracle, Modifier.padding(horizontal = 16.dp).animateItem().cascade(5)) }
     }
 }

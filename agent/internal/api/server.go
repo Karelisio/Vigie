@@ -93,6 +93,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/oracle", s.oracleReport)
 	mux.HandleFunc("GET /api/v1/images", s.imageUpdates)
 	mux.HandleFunc("POST /api/v1/images/check", s.checkImages)
+	mux.HandleFunc("GET /api/v1/traffic", s.trafficReport)
+	mux.HandleFunc("GET /api/v1/top", s.topConsumers)
+	mux.HandleFunc("GET /api/v1/report", s.weeklyReport)
 
 	mux.HandleFunc("GET /api/v1/alerts", s.listAlerts)
 	mux.HandleFunc("GET /api/v1/audit", s.audit)

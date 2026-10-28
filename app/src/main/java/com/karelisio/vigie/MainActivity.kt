@@ -43,7 +43,9 @@ import com.karelisio.vigie.ui.navigation.ContainersRoute
 import com.karelisio.vigie.ui.navigation.HomeRoute
 import com.karelisio.vigie.ui.navigation.LogsRoute
 import com.karelisio.vigie.ui.navigation.OnboardingRoute
+import com.karelisio.vigie.ui.navigation.ReportRoute
 import com.karelisio.vigie.ui.navigation.ServerEditRoute
+import com.karelisio.vigie.ui.navigation.SettingsRoute
 import com.karelisio.vigie.ui.navigation.VigieNavHost
 import com.karelisio.vigie.ui.navigation.navigateTab
 import com.karelisio.vigie.ui.navigation.rememberSnackbar
@@ -182,6 +184,10 @@ private fun Root(prefs: UserPrefs, intent: Intent?, consumed: () -> Unit) {
             data?.scheme == "vigie" && data.host == "open" && ready -> when (data.path) {
                 "/containers" -> nav.navigateTab(ContainersRoute)
                 "/checks" -> nav.navigateTab(ChecksRoute)
+                "/report" -> {
+                    nav.navigateTab(SettingsRoute)
+                    nav.navigate(ReportRoute)
+                }
                 else -> nav.navigateTab(HomeRoute)
             }
             data?.scheme == "vigie" && data.host == "logs" && ready -> {

@@ -223,6 +223,14 @@ class Repository(
 
     suspend fun checkImages(): Map<String, ImageStatus> = api.postEmpty(requireServer(), "/api/v1/images/check")
 
+    // ---- Trafic du mois, top consommateurs, rapport de la semaine (agent 0.4.0 : 404 avant) ----
+
+    suspend fun traffic(): TrafficReport = api.get(requireServer(), "/api/v1/traffic")
+
+    suspend fun top(range: String): List<Consumer> = api.get(requireServer(), "/api/v1/top?range=$range")
+
+    suspend fun report(days: Int = 7): WeeklyReport = api.get(requireServer(), "/api/v1/report?days=$days")
+
     // ---- Alertes, journal, notifications ----
 
     // ---- Mises à jour d'images et actions de stack ----

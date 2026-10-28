@@ -24,6 +24,9 @@ type CtrSample struct {
 	CPU      float64 `json:"cpu"`
 	Mem      float64 `json:"mem"`
 	MemBytes int64   `json:"mem_bytes"`
+	// Débit réseau moyen (octets/s), pour le classement des consommateurs.
+	Rx float64 `json:"-"`
+	Tx float64 `json:"-"`
 }
 
 func (s *Store) InsertSys(ctx context.Context, p SysSample) error {
@@ -41,13 +44,13 @@ func (s *Store) InsertCtr(ctx context.Context, samples []CtrSample) error {
 		return err
 	}
 	defer tx.Rollback()
-	st, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO ctr_minute (name, ts, cpu, mem, mem_bytes) VALUES (?, ?, ?, ?, ?)`)
+	st, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO ctr_minute (name, ts, cpu, mem, mem_bytes, rx, tx) VALUES (?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 	for _, p := range samples {
-		if _, err := st.ExecContext(ctx, p.Name, p.TS, p.CPU, p.Mem, p.MemBytes); err != nil {
+		if _, err := st.ExecContext(ctx, p.Name, p.TS, p.CPU, p.Mem, p.MemBytes, p.Rx, p.Tx); err != nil {
 			return err
 		}
 	}
@@ -66,8 +69,8 @@ func (s *Store) Aggregate(ctx context.Context, lookback time.Duration) error {
 		FROM sys_minute WHERE ts >= ? AND ts < ? GROUP BY ts / ?`, aggBucket, aggBucket, start, end, aggBucket); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO ctr_agg (name, ts, cpu, cpu_max, mem, mem_bytes)
-		SELECT name, (ts / ?) * ?, avg(cpu), max(cpu), avg(mem), CAST(avg(mem_bytes) AS INTEGER)
+	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO ctr_agg (name, ts, cpu, cpu_max, mem, mem_bytes, rx, tx)
+		SELECT name, (ts / ?) * ?, avg(cpu), max(cpu), avg(mem), CAST(avg(mem_bytes) AS INTEGER), avg(rx), avg(tx)
 		FROM ctr_minute WHERE ts >= ? AND ts < ? GROUP BY name, ts / ?`, aggBucket, aggBucket, start, end, aggBucket)
 	return err
 }

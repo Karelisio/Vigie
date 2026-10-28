@@ -1,6 +1,8 @@
 package com.karelisio.vigie.data
 
 import java.text.DateFormat
+import java.text.DecimalFormat
+import java.text.DecimalFormatSymbols
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
@@ -28,6 +30,23 @@ object Fmt {
     }
 
     fun rate(bps: Double): String = bytes(bps) + "/s"
+
+    /** Volume en unités décimales, comme les quotas des hébergeurs (1 To = 10¹² octets) : « 1,64 To ». */
+    fun volume(b: Long): String {
+        val units = arrayOf("o", "ko", "Mo", "Go", "To", "Po")
+        var v = b.toDouble()
+        var i = 0
+        while (abs(v) >= 1000 && i < units.lastIndex) {
+            v /= 1000
+            i++
+        }
+        val pattern = when {
+            i == 0 || v >= 100 -> "0"
+            v >= 10 -> "0.#"
+            else -> "0.##"
+        }
+        return DecimalFormat(pattern, DecimalFormatSymbols(locale)).format(v) + " " + units[i]
+    }
 
     fun pct(v: Double, decimals: Int = 0): String =
         if (decimals == 0) "${v.roundToInt()} %" else String.format(locale, "%.${decimals}f %%", v)

@@ -27,6 +27,7 @@ import kotlinx.serialization.Serializable
 @Serializable data object AutoUpdateRoute
 @Serializable data object AuditRoute
 @Serializable data object AboutRoute
+@Serializable data object ReportRoute
 @Serializable data object OnboardingRoute
 
 data class TopLevel(val route: Any, val label: String, val icon: ImageVector, val selectedIcon: ImageVector)
