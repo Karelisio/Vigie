@@ -152,6 +152,14 @@ fun VigieNavHost(nav: NavHostController, start: Any, snackbar: SnackbarHostState
                         screen<ReportRoute> { com.karelisio.vigie.ui.report.ReportScreen(nav) }
                         screen<ChannelsRoute> { com.karelisio.vigie.ui.settings.ChannelsScreen(nav) }
                         screen<DebridRoute> { com.karelisio.vigie.ui.settings.DebridScreen(nav) }
+                        screen<SecurityRoute> { com.karelisio.vigie.ui.security.SecurityScreen(nav) }
+                        screen<VulnsRoute> { com.karelisio.vigie.ui.security.VulnsScreen(nav) }
+                        screen<PortsRoute> { com.karelisio.vigie.ui.security.PortsScreen(nav) }
+                        screen<SshRoute> { com.karelisio.vigie.ui.security.SshScreen(nav) }
+                        screen<StorageRoute> { com.karelisio.vigie.ui.storage.StorageScreen(nav) }
+                        screen<DomainsRoute> { com.karelisio.vigie.ui.settings.DomainsScreen(nav) }
+                        screen<StatusPageRoute> { com.karelisio.vigie.ui.settings.StatusPageScreen(nav) }
+                        screen<WatchRoute> { com.karelisio.vigie.ui.settings.WatchScreen(nav) }
                     }
 
                     AnimatedVisibility(

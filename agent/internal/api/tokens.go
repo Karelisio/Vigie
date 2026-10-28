@@ -98,7 +98,11 @@ func readOnlyAllowed(r *http.Request) bool {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
 	}
-	for _, prefix := range []string{"/api/v1/tokens", "/api/v1/audit", "/api/v1/channels", "/api/v1/debrid", "/api/v1/backups"} {
+	for _, prefix := range []string{
+		"/api/v1/tokens", "/api/v1/audit", "/api/v1/channels", "/api/v1/debrid", "/api/v1/backups",
+		// Sécurité (failles, ports, SSH) et configuration de la page d'état publique.
+		"/api/v1/vulns", "/api/v1/ports", "/api/v1/ssh", "/api/v1/statuspage",
+	} {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {
 			return false
 		}

@@ -204,8 +204,9 @@ class Repository(
         val known = when {
             !live.value.updatesEnabled -> SETTINGS_0_2
             !live.value.stackActions -> SETTINGS_0_2 + "prune_images"
-            versionAtLeast(live.value.agentVersion, 0, 5) -> body.keys
-            versionAtLeast(live.value.agentVersion, 0, 4) -> body.keys - SETTINGS_0_5
+            versionAtLeast(live.value.agentVersion, 0, 6) -> body.keys
+            versionAtLeast(live.value.agentVersion, 0, 5) -> body.keys - SETTINGS_0_6
+            versionAtLeast(live.value.agentVersion, 0, 4) -> body.keys - SETTINGS_0_5 - SETTINGS_0_6
             else -> SETTINGS_0_2 + "prune_images"
         }
         return api.put(requireServer(), "/api/v1/settings", JsonObject(body.filterKeys { it in known }))
@@ -301,6 +302,12 @@ private val SETTINGS_0_2 = setOf(
 /** Champs de réglages apparus avec l'agent 0.5.0. */
 private val SETTINGS_0_5 = setOf(
     "auto_heal", "auto_heal_all", "auto_heal_list", "auto_heal_delay", "auto_heal_max", "regression_alert",
+)
+
+/** Champs de réglages apparus avec l'agent 0.6.0. */
+private val SETTINGS_0_6 = setOf(
+    "disk_forecast_days", "volume_growth_gb", "vuln_scan", "vuln_alert", "port_alert", "port_allow",
+    "ssh_watch", "ssh_login_alert", "domains", "domain_days", "debrid_down_alert",
 )
 
 /** Compare une version « X.Y.Z » (les versions de développement sont considérées récentes). */

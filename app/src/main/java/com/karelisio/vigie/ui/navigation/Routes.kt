@@ -35,6 +35,14 @@ import kotlinx.serialization.Serializable
 @Serializable data object OnboardingRoute
 @Serializable data object ChannelsRoute
 @Serializable data object DebridRoute
+@Serializable data object SecurityRoute
+@Serializable data object VulnsRoute
+@Serializable data object PortsRoute
+@Serializable data object SshRoute
+@Serializable data object StorageRoute
+@Serializable data object DomainsRoute
+@Serializable data object StatusPageRoute
+@Serializable data object WatchRoute
 
 data class TopLevel(val route: Any, val label: String, val icon: ImageVector, val selectedIcon: ImageVector)
 

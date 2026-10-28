@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,30 @@ type Settings struct {
 
 	// Alerte si un conteneur consomme nettement plus après une mise à jour.
 	RegressionAlert bool `json:"regression_alert"`
+
+	// Prévision du disque : alerte quand il sera plein dans moins de N jours (0 = pas d'alerte).
+	DiskForecastDays int `json:"disk_forecast_days"`
+	// Alerte quand un volume grossit de plus de N Go par jour (0 = pas d'alerte).
+	VolumeGrowthGB float64 `json:"volume_growth_gb"`
+
+	// Failles connues dans les images (base OSV).
+	VulnScan  bool   `json:"vuln_scan"`
+	VulnAlert string `json:"vuln_alert"` // critical, high ou off
+
+	// Ports ouverts sur Internet : alerte à l'apparition d'un port non autorisé.
+	PortAlert bool     `json:"port_alert"`
+	PortAllow []string `json:"port_allow"` // « 443/tcp », « 51820/udp »…
+
+	// Connexions SSH (journal de l'hôte).
+	SSHWatch      bool `json:"ssh_watch"`
+	SSHLoginAlert bool `json:"ssh_login_alert"` // alerte à chaque connexion réussie
+
+	// Expiration des noms de domaine (détectés depuis les services, plus cette liste).
+	Domains    []string `json:"domains"`
+	DomainDays int      `json:"domain_days"` // préavis en jours
+
+	// Alerte quand un service debrid ne répond plus.
+	DebridDownAlert bool `json:"debrid_down_alert"`
 }
 
 // LogRule déclenche une alerte quand une ligne de log correspond au motif.
@@ -164,6 +189,35 @@ func (s *Settings) validate() error {
 	if s.NetQuotaAlert < 50 || s.NetQuotaAlert > 100 {
 		return errors.New("seuil d'alerte du quota hors limites (50–100 %)")
 	}
+	if s.DiskForecastDays < 0 || s.DiskForecastDays > 90 {
+		return errors.New("préavis de disque plein hors limites (0–90 jours)")
+	}
+	if s.VolumeGrowthGB < 0 || s.VolumeGrowthGB > 1000 {
+		return errors.New("croissance d'un volume hors limites (0–1000 Go par jour)")
+	}
+	switch s.VulnAlert {
+	case "":
+		s.VulnAlert = "critical"
+	case "critical", "high", "off":
+	default:
+		return fmt.Errorf("niveau d'alerte des failles invalide %q (critical, high ou off)", s.VulnAlert)
+	}
+	ports, err := cleanPorts(s.PortAllow)
+	if err != nil {
+		return err
+	}
+	s.PortAllow = ports
+	domains, err := cleanDomains(s.Domains)
+	if err != nil {
+		return err
+	}
+	s.Domains = domains
+	if s.DomainDays == 0 {
+		s.DomainDays = 30
+	}
+	if s.DomainDays < 1 || s.DomainDays > 180 {
+		return errors.New("préavis d'expiration des domaines hors limites (1–180 jours)")
+	}
 	if s.MaintenanceUntil < 0 {
 		s.MaintenanceUntil = 0
 	}
@@ -192,6 +246,64 @@ func (s *Settings) validate() error {
 	}
 	s.LogRules = rules
 	return nil
+}
+
+// cleanPorts normalise les ports autorisés en « port/proto » (tcp par défaut), sans doublon.
+func cleanPorts(in []string) ([]string, error) {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, raw := range in {
+		v := strings.ToLower(strings.TrimSpace(raw))
+		if v == "" {
+			continue
+		}
+		port, proto, found := strings.Cut(v, "/")
+		if !found {
+			proto = "tcp"
+		}
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 || (proto != "tcp" && proto != "udp") {
+			return nil, fmt.Errorf("port autorisé invalide %q (ex. 443 ou 51820/udp)", raw)
+		}
+		if v = fmt.Sprintf("%d/%s", n, proto); !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	if len(out) > 100 {
+		return nil, errors.New("100 ports autorisés au maximum")
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+var domainRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$`)
+
+// cleanDomains normalise la liste des domaines surveillés (minuscules, sans schéma ni chemin).
+func cleanDomains(in []string) ([]string, error) {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, raw := range in {
+		v := strings.ToLower(strings.TrimSpace(raw))
+		v = strings.TrimPrefix(strings.TrimPrefix(v, "https://"), "http://")
+		v, _, _ = strings.Cut(v, "/")
+		v = strings.TrimSuffix(v, ".")
+		if v == "" {
+			continue
+		}
+		if len(v) > 253 || !domainRe.MatchString(v) {
+			return nil, fmt.Errorf("nom de domaine invalide %q", raw)
+		}
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	if len(out) > 50 {
+		return nil, errors.New("50 domaines au maximum")
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // cleanNames retire les doublons et les « / » de tête, puis trie.
@@ -241,6 +353,18 @@ func Load(ctx context.Context, st *store.Store, cfg *config.Config) *Manager {
 		AutoHealDelay:   3,
 		AutoHealMax:     3,
 		RegressionAlert: true,
+
+		DiskForecastDays: 14,
+		VolumeGrowthGB:   5,
+		VulnScan:         true,
+		VulnAlert:        "critical",
+		PortAlert:        true,
+		PortAllow:        []string{},
+		SSHWatch:         true,
+		SSHLoginAlert:    true,
+		Domains:          []string{},
+		DomainDays:       30,
+		DebridDownAlert:  true,
 	}
 	if raw := st.Get(ctx, key); raw != "" {
 		saved := s
@@ -259,6 +383,8 @@ func (m *Manager) Get() Settings {
 	cp.AutoUpdateList = append([]string{}, m.s.AutoUpdateList...)
 	cp.LogRules = append([]LogRule{}, m.s.LogRules...)
 	cp.AutoHealList = append([]string{}, m.s.AutoHealList...)
+	cp.PortAllow = append([]string{}, m.s.PortAllow...)
+	cp.Domains = append([]string{}, m.s.Domains...)
 	return cp
 }
 

@@ -33,6 +33,13 @@ func TestReadOnlyAllowed(t *testing.T) {
 		{"GET", "/api/v1/channels", false},
 		{"GET", "/api/v1/debrid", false},
 		{"GET", "/api/v1/backups/config", false},
+		{"GET", "/api/v1/vulns", false},
+		{"GET", "/api/v1/ssh/events", false},
+		{"GET", "/api/v1/ports", false},
+		{"GET", "/api/v1/statuspage", false},
+		{"GET", "/api/v1/storage", true},
+		{"GET", "/api/v1/domains", true},
+		{"POST", "/api/v1/containers/abc/rollback", false},
 	} {
 		if got := readOnlyAllowed(httptest.NewRequest(c.method, c.path, nil)); got != c.ok {
 			t.Errorf("%s %s : %v, attendu %v", c.method, c.path, got, c.ok)

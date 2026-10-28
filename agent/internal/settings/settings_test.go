@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -65,5 +66,39 @@ func TestNewSettingsValidation(t *testing.T) {
 	m.MaintenanceUntil = time.Now().Add(time.Hour).UnixMilli()
 	if !m.InMaintenance(time.Now()) || m.InMaintenance(time.Now().Add(2*time.Hour)) {
 		t.Error("InMaintenance")
+	}
+}
+
+func TestSettings06Validation(t *testing.T) {
+	base := Settings{CPU: 90, RAM: 90, Disk: 90, DurationMin: 5, CertDays: 14, NetQuotaAlert: 80, NetQuotaTB: 10}
+	s := base
+	s.PortAllow = []string{" 443 ", "51820/UDP", "443/tcp"}
+	s.Domains = []string{"https://Comet.15122000.xyz/manifest.json", "15122000.xyz.", "comet.15122000.xyz"}
+	if err := s.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(s.PortAllow, []string{"443/tcp", "51820/udp"}) {
+		t.Errorf("ports = %v", s.PortAllow)
+	}
+	if !slices.Equal(s.Domains, []string{"15122000.xyz", "comet.15122000.xyz"}) {
+		t.Errorf("domaines = %v", s.Domains)
+	}
+	if s.VulnAlert != "critical" || s.DomainDays != 30 {
+		t.Errorf("valeurs par défaut : %q %d", s.VulnAlert, s.DomainDays)
+	}
+	for _, mut := range []func(*Settings){
+		func(s *Settings) { s.PortAllow = []string{"70000"} },
+		func(s *Settings) { s.PortAllow = []string{"53/sctp"} },
+		func(s *Settings) { s.Domains = []string{"pas un domaine"} },
+		func(s *Settings) { s.VulnAlert = "medium" },
+		func(s *Settings) { s.DiskForecastDays = 91 },
+		func(s *Settings) { s.VolumeGrowthGB = -1 },
+		func(s *Settings) { s.DomainDays = 200 },
+	} {
+		bad := base
+		mut(&bad)
+		if bad.validate() == nil {
+			t.Errorf("accepté : %+v", bad)
+		}
 	}
 }

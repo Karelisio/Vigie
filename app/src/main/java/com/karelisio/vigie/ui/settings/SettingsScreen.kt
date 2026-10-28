@@ -38,6 +38,11 @@ import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Watch
+import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.NightsStay
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Palette
@@ -286,6 +291,23 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
                 }
             }
         }
+        if (!live.readOnly && versionAtLeast(live.agentVersion, 0, 6)) {
+            item {
+                Row_(Icons.Rounded.Shield, "Sécurité du serveur", "Failles des images, ports ouverts, connexions SSH") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.SecurityRoute)
+                }
+            }
+            item {
+                Row_(Icons.Rounded.Language, "Noms de domaine", "Date d'expiration, alerte avant la fin") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.DomainsRoute)
+                }
+            }
+            item {
+                Row_(Icons.Rounded.Public, "Page d'état publique", "Un lien à partager : services en ligne ou non") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.StatusPageRoute)
+                }
+            }
+        }
         item { Row_(Icons.Rounded.Security, "Autorisations", "Notifications, caméra, batterie, installation") { nav.navigate(PermissionsRoute) } }
         item { Row_(Icons.Rounded.WarningAmber, "Alertes récentes", "Incidents des 30 derniers jours") { nav.navigate(AlertsRoute) } }
         if (versionAtLeast(live.agentVersion, 0, 4)) {
@@ -337,11 +359,23 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
                 }
             }
         }
+        if (versionAtLeast(live.agentVersion, 0, 6)) {
+            item {
+                Row_(Icons.Rounded.Storage, "Stockage", "Prévision du disque, taille et croissance des volumes") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.StorageRoute)
+                }
+            }
+        }
         if (backups) {
             item {
                 Row_(Icons.Rounded.Backup, "Sauvegardes", "Volumes et données de Vigie vers un stockage S3") {
                     nav.navigate(com.karelisio.vigie.ui.navigation.BackupsRoute)
                 }
+            }
+        }
+        item {
+            Row_(Icons.Rounded.Watch, "Montre", "Tuile Wear OS : état du serveur au poignet") {
+                nav.navigate(com.karelisio.vigie.ui.navigation.WatchRoute)
             }
         }
         item { Row_(Icons.Rounded.Info, "À propos", info?.let { "Agent ${it.version} · ${it.host.hostname}" } ?: "Vigie") { nav.navigate(AboutRoute) } }
@@ -365,7 +399,7 @@ private fun Section(title: String) {
 }
 
 @Composable
-private fun Row_(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+internal fun Row_(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
     Surface(onClick = onClick, shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)

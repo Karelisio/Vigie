@@ -342,6 +342,17 @@ data class AgentSettings(
     @SerialName("auto_heal_delay") val autoHealDelay: Int = 3,
     @SerialName("auto_heal_max") val autoHealMax: Int = 3,
     @SerialName("regression_alert") val regressionAlert: Boolean = true,
+    @SerialName("disk_forecast_days") val diskForecastDays: Int = 14,
+    @SerialName("volume_growth_gb") val volumeGrowthGb: Double = 5.0,
+    @SerialName("vuln_scan") val vulnScan: Boolean = true,
+    @SerialName("vuln_alert") val vulnAlert: String = "critical",
+    @SerialName("port_alert") val portAlert: Boolean = true,
+    @SerialName("port_allow") val portAllow: List<String> = emptyList(),
+    @SerialName("ssh_watch") val sshWatch: Boolean = true,
+    @SerialName("ssh_login_alert") val sshLoginAlert: Boolean = true,
+    val domains: List<String> = emptyList(),
+    @SerialName("domain_days") val domainDays: Int = 30,
+    @SerialName("debrid_down_alert") val debridDownAlert: Boolean = true,
 )
 
 /** Alerte quand une ligne de log d'un conteneur contient un texte (ou correspond à une regex). */
