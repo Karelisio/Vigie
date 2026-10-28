@@ -98,7 +98,7 @@ func run(log *slog.Logger) error {
 			}
 			st.Audit(context.Background(), "agent", "résultat", j.Target, result+" — "+j.Message, "vigie")
 			if j.Kind != "self" || !j.OK {
-				eng.NotifyJob(j.Title(), j.Message, j.OK)
+				eng.NotifyJob(j.Title(), j.Body(), j.OK)
 			}
 		},
 	}, updater.Options{
@@ -127,6 +127,7 @@ func run(log *slog.Logger) error {
 
 	go mon.Run(ctx)
 	go runner.Run(ctx)
+	go updater.NewNightly(upd, mon, st, log).Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

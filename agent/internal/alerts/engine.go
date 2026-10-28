@@ -390,7 +390,8 @@ func (e *Engine) dispatch(n Notification, resolved, push bool) {
 	if push && e.set.Get().InQuietHours(time.Now()) {
 		// Heures calmes : pas de notification, un résumé sera envoyé à la fin.
 		push = false
-		if !resolved {
+		// Le bilan d'une opération réussie (mises à jour de la nuit) figure aussi dans le résumé.
+		if !resolved || n.Kind == "job" {
 			e.mu.Lock()
 			e.quiet = append(e.quiet, n.Title)
 			e.mu.Unlock()

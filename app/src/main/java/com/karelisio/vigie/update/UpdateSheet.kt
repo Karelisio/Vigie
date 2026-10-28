@@ -42,14 +42,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.karelisio.vigie.data.Fmt
 import com.karelisio.vigie.ui.components.AnimatedCounter
+import com.karelisio.vigie.ui.components.Markdown
 import com.karelisio.vigie.ui.components.Springs
 import kotlinx.coroutines.launch
 
@@ -133,11 +129,7 @@ fun UpdateSheet(state: UpdateState, updater: Updater) {
                     shape = MaterialTheme.shapes.large,
                     modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
                 ) {
-                    Text(
-                        markdown(release.changelog),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
-                    )
+                    Markdown(release.changelog, Modifier.verticalScroll(rememberScrollState()).padding(16.dp))
                 }
             }
             Spacer(Modifier.size(20.dp))
@@ -168,29 +160,5 @@ fun UpdateSheet(state: UpdateState, updater: Updater) {
                 }
             }
         }
-    }
-}
-
-/** Rendu minimal du changelog Markdown (titres, puces, gras). */
-fun markdown(src: String): AnnotatedString = buildAnnotatedString {
-    src.lines().forEachIndexed { i, raw ->
-        if (i > 0) append('\n')
-        val line = raw.trimEnd()
-        when {
-            line.startsWith("#") -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(line.trimStart('#', ' ')) }
-            line.trimStart().startsWith("- ") || line.trimStart().startsWith("* ") -> {
-                append("  •  ")
-                appendInline(line.trimStart().drop(2))
-            }
-            else -> appendInline(line)
-        }
-    }
-}
-
-private fun AnnotatedString.Builder.appendInline(text: String) {
-    val parts = text.split("**")
-    parts.forEachIndexed { i, p ->
-        val clean = p.replace(Regex("\\[([^]]+)]\\([^)]+\\)"), "$1").replace("`", "")
-        if (i % 2 == 1) withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(clean) } else append(clean)
     }
 }

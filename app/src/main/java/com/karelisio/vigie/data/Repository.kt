@@ -253,6 +253,9 @@ class Repository(
 
     suspend fun updateAgent(): AgentJob = started(api.postEmpty(requireServer(), "/api/v1/agent/update"))
 
+    /** Notes de version GitHub de l'image du conteneur (agent 0.4.0 et plus). */
+    suspend fun changelog(id: String): ImageChangelog = api.get(requireServer(), "/api/v1/containers/$id/changelog")
+
     suspend fun alerts(limit: Int = 100): List<Alert> = api.get(requireServer(), "/api/v1/alerts?limit=$limit")
 
     suspend fun audit(limit: Int = 200): List<AuditEntry> = api.get(requireServer(), "/api/v1/audit?limit=$limit")

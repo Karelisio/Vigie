@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.karelisio.vigie.data.AgentJob
 import com.karelisio.vigie.data.Container
+import com.karelisio.vigie.data.versionAtLeast
 import com.karelisio.vigie.ui.components.Chip
 import com.karelisio.vigie.ui.components.JobProgress
 import com.karelisio.vigie.ui.components.SectionCard
@@ -51,7 +52,8 @@ internal fun updateExplanation(c: Container): String =
 
 /**
  * Image du conteneur et actions de mise à jour.
- * [job] est l'opération en cours ou récente qui le concerne.
+ * [job] est l'opération en cours ou récente qui le concerne. Nouveautés et mise à jour de nuit
+ * demandent un agent 0.4.0 ou plus ([agentVersion]).
  */
 @Composable
 internal fun UpdateCard(
@@ -63,8 +65,11 @@ internal fun UpdateCard(
     onPull: () -> Unit,
     onStack: () -> Unit,
     modifier: Modifier = Modifier,
+    agentVersion: String = "",
 ) {
     var confirm by remember { mutableStateOf<String?>(null) }
+    var changelog by remember { mutableStateOf(false) }
+    val recent = versionAtLeast(agentVersion, 0, 4)
     val haptics = rememberHaptics()
     SectionCard(
         modifier,
@@ -85,6 +90,10 @@ internal fun UpdateCard(
             job?.let { JobProgress(it, Modifier.padding(top = 12.dp)) }
         }
         Spacer(Modifier.height(12.dp))
+        if (recent) {
+            ChangelogButton(highlight = c.updateAvailable) { haptics.tick(); changelog = true }
+            Spacer(Modifier.height(8.dp))
+        }
         if (!enabled) {
             Text(
                 "Mises à jour depuis l'appli indisponibles : mets l'agent à jour (version 0.3.0 ou plus) " +
@@ -113,6 +122,7 @@ internal fun UpdateCard(
                 Icon(Icons.Rounded.CloudDownload, "Télécharger l'image sans redémarrer")
             }
         }
+        if (recent) AutoUpdateSwitch(c)
         if (c.project.isNotEmpty()) {
             TextButton(onClick = { haptics.tick(); confirm = "stack" }, enabled = !busy) {
                 Icon(Icons.Rounded.Layers, null)
@@ -120,6 +130,14 @@ internal fun UpdateCard(
                 Text("Mettre à jour toute la stack « ${c.project} »")
             }
         }
+    }
+
+    if (changelog) {
+        ChangelogSheet(
+            c, canUpdate = enabled, busy = busy,
+            onUpdate = { changelog = false; confirm = "update" },
+            onDismiss = { changelog = false },
+        )
     }
 
     confirm?.let { what ->

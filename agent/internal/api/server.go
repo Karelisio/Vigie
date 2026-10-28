@@ -65,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/containers/{id}/stop", s.action("stop"))
 	mux.HandleFunc("POST /api/v1/containers/{id}/restart", s.action("restart"))
 	mux.HandleFunc("POST /api/v1/containers/{id}/update", s.updateContainer)
+	mux.HandleFunc("GET /api/v1/containers/{id}/changelog", s.containerChangelog)
 	mux.HandleFunc("POST /api/v1/stacks/{project}/{action}", s.stackAction)
 	mux.HandleFunc("POST /api/v1/updates/apply", s.updateAll)
 	mux.HandleFunc("POST /api/v1/agent/update", s.updateAgent)

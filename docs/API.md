@@ -24,6 +24,7 @@ Dates en millisecondes Unix. Erreurs : `{"error": "message"}` avec le code HTTP 
 | WS | `/api/v1/containers/{id}/logs/stream?tail=300` | messages `{"type":"lines","data":[…]}`, puis `{"type":"end"}` si le conteneur s'arrête |
 | POST | `/api/v1/containers/{id}/start` · `/stop` · `/restart` | `{ok, state}` |
 | POST | `/api/v1/containers/{id}/update` | `{pull_only?}` : télécharge l'image et recrée le conteneur (ou télécharge seulement). Sur l'agent lui-même : remplacement via un conteneur auxiliaire. Réponse 202 : l'opération (`job`) |
+| GET | `/api/v1/containers/{id}/changelog` | notes de version GitHub de l'image : `source` (`github.com/owner/repo` ou `""`), `current` (version du conteneur ou `""`), `releases[]` (10 dernières : `tag, name, published_at, body` (Markdown, 6000 caractères au plus), `url, newer`), `error?`. Source : label `org.opencontainers.image.source`, sinon référence `ghcr.io/owner/repo`. Mis en cache 1 h par dépôt |
 | GET | `/api/v1/containers/{id}/events?limit=80` | chronologie (30 jours) : `ts, action, detail, source` (`docker` ou `vigie`) |
 | POST | `/api/v1/containers/{id}/mute` | `{muted}` : coupe ou réactive ses notifications, renvoie les réglages |
 
@@ -76,6 +77,8 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 | `job` | avancement d'une mise à jour ou d'une action de stack (au plus 4 par seconde) |
 
 Une seule opération à la fois (409 sinon). `GET /api/v1/info` indique `updates_enabled` et `last_self_update` (`ok`, `error`, `from`, `ts`).
+
+Mises à jour de la nuit (réglages `auto_update`, `auto_update_time` en HH:MM selon `TZ`, `auto_update_all`, `auto_update_list[]`, `auto_update_agent`) : chaque jour à l'heure choisie, l'agent revérifie les images puis lance l'opération `kind: "auto"`, `target: "nightly"` sur les conteneurs retenus qui ont une nouvelle image (l'agent en dernier). Une fois par jour au plus, même après un redémarrage ; si une opération est déjà en cours, 3 nouveaux essais à 10 min d'intervalle.
 
 Format : `{"type": "...", "data": ...}`. Un ping WebSocket est envoyé toutes les 25 s.
 

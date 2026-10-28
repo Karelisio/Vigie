@@ -308,7 +308,7 @@ private fun ThresholdSlider(label: String, value: Double, onChange: (Double) -> 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TimeDialog(initial: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+internal fun TimeDialog(initial: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     val (h, m) = initial.split(":").map { it.toIntOrNull() ?: 0 }.let { (it.getOrElse(0) { 0 }) to (it.getOrElse(1) { 0 }) }
     val state = rememberTimePickerState(initialHour = h, initialMinute = m, is24Hour = true)
     AlertDialog(

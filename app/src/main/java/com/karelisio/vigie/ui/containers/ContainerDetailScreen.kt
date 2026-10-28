@@ -271,6 +271,7 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
             onPull = { runJob(null) { vm.update(id, true) } },
             onStack = { runJob("Mettre à jour la stack ${c.project}") { vm.stack(c.project, "update") } },
             modifier = Modifier.padding(horizontal = 16.dp).cascade(2),
+            agentVersion = state.agentVersion,
         )
         Spacer(Modifier.height(12.dp))
         Charts(history, vm::loadHistory, Modifier.padding(horizontal = 16.dp).cascade(2))

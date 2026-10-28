@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.NightsStay
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Security
@@ -270,6 +271,11 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
                     else -> "Agent ${i.version} · télécharge la dernière image et redémarre"
                 },
             ) { if (i?.updatesEnabled == true && live.runningJob == null) agentDialog = true }
+        }
+        item {
+            Row_(Icons.Rounded.NightsStay, "Mises à jour automatiques", "Installer les nouvelles images pendant la nuit") {
+                nav.navigate(com.karelisio.vigie.ui.navigation.AutoUpdateRoute)
+            }
         }
         if (live.v04) {
             item {

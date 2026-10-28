@@ -381,7 +381,7 @@ data class AgentJob(
     /** Vrai si l'opération concerne ce conteneur (directement ou via sa stack). */
     fun concerns(c: Container): Boolean = when (kind) {
         "stack" -> c.project == target
-        "batch" -> c.updateAvailable || results.any { it.name == c.name }
+        "batch", "auto" -> c.updateAvailable || results.any { it.name == c.name }
         else -> target == c.name
     }
 }

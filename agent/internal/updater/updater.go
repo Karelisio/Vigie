@@ -39,7 +39,7 @@ type Result struct {
 // Job décrit une opération en cours ou terminée, diffusée en direct à l'appli.
 type Job struct {
 	ID         string   `json:"id"`
-	Kind       string   `json:"kind"`   // update, pull, self, stack, batch
+	Kind       string   `json:"kind"`   // update, pull, self, stack, batch, auto (nuit)
 	Action     string   `json:"action"` // update, pull, restart, start, stop
 	Target     string   `json:"target"` // conteneur, stack ou « all »
 	Phase      string   `json:"phase"`  // queued, pulling, recreating, verifying, done, failed
@@ -892,6 +892,20 @@ func (j Job) Title() string {
 			return "Nettoyage terminé"
 		}
 		return "Échec du nettoyage"
+	case "auto":
+		updated, failed := 0, 0
+		for _, r := range j.Results {
+			if !r.OK {
+				failed++
+			} else if r.Updated {
+				updated++
+			}
+		}
+		summary := groupSummary("update", len(j.Results), updated, failed)
+		if summary == "" || !j.OK && failed == 0 {
+			return "Mises à jour de la nuit : échec" // interrompues avant la fin
+		}
+		return "Mises à jour de la nuit : " + summary
 	}
 	if !j.OK {
 		return "Échec de la mise à jour de " + j.Target
@@ -900,4 +914,31 @@ func (j Job) Title() string {
 		return j.Target + " est déjà à jour"
 	}
 	return j.Target + " mis à jour"
+}
+
+// Body détaille l'opération pour une notification : pour les mises à jour de la nuit, la liste des
+// conteneurs mis à jour et de ceux en échec.
+func (j Job) Body() string {
+	if j.Kind != "auto" {
+		return j.Message
+	}
+	var updated, failed []string
+	for _, r := range j.Results {
+		if !r.OK {
+			failed = append(failed, r.Name)
+		} else if r.Updated {
+			updated = append(updated, r.Name)
+		}
+	}
+	var parts []string
+	if len(updated) > 0 {
+		parts = append(parts, "Mis à jour : "+strings.Join(updated, ", ")+".")
+	}
+	if len(failed) > 0 {
+		parts = append(parts, "Échec : "+strings.Join(failed, ", ")+".")
+	}
+	if len(parts) == 0 {
+		return j.Message
+	}
+	return strings.Join(parts, " ")
 }

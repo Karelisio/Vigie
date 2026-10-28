@@ -127,6 +127,14 @@ type ImageDetails struct {
 	ID          string         `json:"Id"`
 	RepoDigests []string       `json:"RepoDigests"`
 	Config      map[string]any `json:"Config"`
+	Created     string         `json:"Created"` // date de construction (RFC 3339)
+}
+
+// Label renvoie un label de l'image ("" s'il est absent).
+func (i *ImageDetails) Label(key string) string {
+	labels, _ := i.Config["Labels"].(map[string]any)
+	v, _ := labels[key].(string)
+	return v
 }
 
 func (c *Client) ImageDetails(ctx context.Context, ref string) (*ImageDetails, error) {
