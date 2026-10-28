@@ -69,6 +69,8 @@ CREATE INDEX IF NOT EXISTS events_name_ts ON events (name, ts);
 CREATE TABLE IF NOT EXISTS traffic (
   month TEXT PRIMARY KEY, rx INTEGER NOT NULL DEFAULT 0, tx INTEGER NOT NULL DEFAULT 0, since INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS vuln_inventory (image_id TEXT PRIMARY KEY, data TEXT NOT NULL, read_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS vuln_records (id TEXT PRIMARY KEY, modified TEXT NOT NULL, data TEXT NOT NULL, fetched_at INTEGER NOT NULL);
 `
 
 // migrations ajoute les colonnes apparues après la première version (erreurs « déjà présente » ignorées).

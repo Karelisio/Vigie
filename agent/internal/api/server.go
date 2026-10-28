@@ -26,6 +26,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/storage"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/updater"
+	"github.com/karelisio/vigie/agent/internal/vulns"
 )
 
 type Server struct {
@@ -56,6 +57,8 @@ type Server struct {
 	Domains *domains.Manager
 	// StatusPage publie la page d'état publique (renseigné après New).
 	StatusPage *statuspage.Manager
+	// Vulns recherche les failles connues des images (renseigné après New).
+	Vulns *vulns.Scanner
 }
 
 func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, upd *updater.Manager, log *slog.Logger, version string) *Server {
@@ -154,6 +157,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/statuspage/regenerate", s.regenerateStatusPage)
 	// Page d'état publique : seules routes sans token (voir isPublicStatus).
 	mux.HandleFunc("GET /status/{slug}", s.publicStatus)
+
+	mux.HandleFunc("GET /api/v1/vulns", s.getVulns)
+	mux.HandleFunc("POST /api/v1/vulns/scan", s.scanVulns)
 
 	mux.HandleFunc("GET /api/v1/ws", s.live)
 

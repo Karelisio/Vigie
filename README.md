@@ -159,6 +159,7 @@ L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et p
 - **Sauvegardes** chaque jour (ou à la demande) vers un stockage compatible S3 : volumes, dossiers montés et données de Vigie, compressés, avec rétention et arrêt facultatif du conteneur pendant la copie, et **restauration en un geste** depuis l'appli, avec copie de sécurité avant et retour en arrière possible (Réglages → Sauvegardes, voir [plus bas](#sauvegardes)).
 - **Noms de domaine** (Réglages → Noms de domaine) : date d'expiration lue chaque jour chez le registre (RDAP) pour les domaines de tes services et ceux que tu ajoutes, jours restants en couleur, bureau d'enregistrement ; alerte 30 jours avant (réglable), puis 7 jours avant et à l'expiration, close au renouvellement.
 - **Page d'état publique** (Réglages → Page d'état publique) : une page web à partager, sans compte ni appli, avec l'état des services et conteneurs choisis sous le nom que tu leur donnes, la disponibilité sur 90 jours et les incidents de la semaine ; adresse secrète, que tu peux changer à tout moment (voir [plus bas](#page-détat-publique)).
+- **Failles connues dans les images** (Réglages → Sécurité du serveur) : chaque nuit, après une mise à jour d'image ou à la demande, l'agent relève les paquets installés (Debian, Ubuntu, Alpine, images distroless, dépendances npm) et les compare à la base publique [OSV](https://osv.dev) ; seuls des noms et versions de paquets lui sont envoyés. Gravité, version corrigée, lien vers la fiche, et alerte pour les failles critiques corrigées dans une version plus récente.
 - **Deux widgets** (serveur, services) redimensionnables aux couleurs du système, **tuile** de réglages rapides, **raccourcis** Conteneurs/Services, **mode hors ligne** avec l'heure de la dernière mise à jour.
 - Plusieurs serveurs possibles (nom, URL, token), tokens chiffrés sur le téléphone (EncryptedSharedPreferences).
 - Respecte le réglage système « Supprimer les animations ».
@@ -273,6 +274,7 @@ La page n'affiche que les noms choisis : ni adresse, ni IP, ni image, ni message
 | `TZ` | `Europe/Paris` (compose) | fuseau des heures calmes |
 | `VIGIE_ORACLE` | auto | `true`/`false` pour forcer l'analyse Oracle Always Free (détectée via le noyau) |
 | `VIGIE_NET_MBPS` | auto | débit réseau de l'instance, pour le critère réseau d'Oracle |
+| `VIGIE_OSV_URL` | `https://api.osv.dev` | API OSV interrogée pour les failles connues (miroir, essais) |
 | `FCM_SERVICE_ACCOUNT_B64` | — | compte de service Firebase (base64) |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | accepte aussi `tcp://socket-proxy:2375` |
 

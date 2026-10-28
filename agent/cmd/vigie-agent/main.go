@@ -35,6 +35,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/system"
 	"github.com/karelisio/vigie/agent/internal/traffic"
 	"github.com/karelisio/vigie/agent/internal/updater"
+	"github.com/karelisio/vigie/agent/internal/vulns"
 )
 
 var version = "dev"
@@ -129,6 +130,13 @@ func run(log *slog.Logger) error {
 		heal.OnEvent(ev)
 	}
 
+	// Failles connues dans les images (OSV) : chaque nuit, après une mise à jour et à la demande.
+	vs := vulns.New(ctx, dk, st, set.Get, log, vulns.Options{
+		Version:         version,
+		UpdateAvailable: func(name string) bool { return mon.ImageUpdates()[name].UpdateAvailable },
+	})
+	vs.OnReport = eng.OnVulns
+
 	upd := updater.New(dk, log, updater.Hooks{
 		NoteAction:   mon.NoteAction,
 		SetTransient: mon.SetTransient,
@@ -148,6 +156,9 @@ func run(log *slog.Logger) error {
 					}
 				}
 				reg.OnUpdated(context.Background(), updated, time.UnixMilli(j.FinishedAt))
+				if len(updated) > 0 {
+					vs.ImagesUpdated()
+				}
 			}
 			if j.Kind == "rollback" && j.OK {
 				reg.Forget(context.Background(), j.Target) // plus de comparaison avec la version écartée
@@ -215,6 +226,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	apiSrv.StatusPage = sp
+	apiSrv.Vulns = vs
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           apiSrv.Handler(),
@@ -234,6 +246,7 @@ func run(log *slog.Logger) error {
 	go bk.Run(ctx)
 	go sto.Run(ctx)
 	go doms.Run(ctx)
+	go vs.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

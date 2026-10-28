@@ -15,9 +15,16 @@ import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import com.karelisio.vigie.appContainer
+import com.karelisio.vigie.data.vulnReport
+import com.karelisio.vigie.data.vulns
 import com.karelisio.vigie.ui.components.ScreenHeader
 import com.karelisio.vigie.ui.navigation.PortsRoute
 import com.karelisio.vigie.ui.navigation.SshRoute
@@ -44,7 +51,10 @@ fun SecurityScreen(nav: NavHostController) {
             )
         }
         item {
-            Row_(Icons.Rounded.BugReport, "Failles connues", "Paquets vulnérables dans les images, version corrigée") {
+            // Résumé de la dernière analyse des failles, chargé à l'ouverture.
+            val vulns by remember { appContainer.repository.vulnReport() }.collectAsStateWithLifecycle(null)
+            LaunchedEffect(Unit) { runCatching { appContainer.repository.vulns() } }
+            Row_(Icons.Rounded.BugReport, "Failles connues", vulns?.summary() ?: "Paquets vulnérables dans les images, version corrigée") {
                 nav.navigate(VulnsRoute)
             }
         }
