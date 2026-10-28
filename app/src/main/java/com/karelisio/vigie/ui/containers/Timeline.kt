@@ -71,6 +71,9 @@ private fun summarize(c: List<TimelineEvent>): TimelineGroup {
         return g("Échec de « ${verb(byVigie.action)} »$fromVigie", "critical", byVigie.detail)
     }
     return when {
+        // Restauration d'une sauvegarde (agent 0.6) : elle explique le redémarrage qui la termine.
+        "restore_failed" in actions -> g("Échec de la restauration", "critical", c.first { it.action == "restore_failed" }.detail)
+        "restore" in actions -> g("Données restaurées", "ok", c.first { it.action == "restore" }.detail)
         // Réparation automatique par l'agent : elle explique les arrêts et démarrages qui l'entourent.
         "autoheal" in actions -> {
             val reason = c.first { it.action == "autoheal" }.detail

@@ -50,6 +50,18 @@ class TimelineTest {
     }
 
     @Test
+    fun restore() {
+        val g = groupTimeline(listOf(ev(200_000, "restore", "copie du 28/10/2026 à 03:30"), ev(199_000, "start"), ev(1_000, "die", "0"), ev(900, "stop")))
+        assertEquals(listOf("Données restaurées", "Arrêté"), g.map { it.title })
+        assertEquals("copie du 28/10/2026 à 03:30", g[0].detail)
+        assertEquals("ok", g[0].tone)
+        val failed = groupTimeline(listOf(ev(2_000, "restore_failed", "copie de sécurité impossible"), ev(1_500, "start"))).single()
+        assertEquals("Échec de la restauration", failed.title)
+        assertEquals("critical", failed.tone)
+        assertEquals("copie de sécurité impossible", failed.detail)
+    }
+
+    @Test
     fun recreate() {
         val g = groupTimeline(listOf(ev(1, "die", "0"), ev(2, "stop"), ev(3, "destroy"), ev(4, "create"), ev(5, "start")))
         assertEquals("Recréé (mise à jour ou redéploiement)", g.single().title)

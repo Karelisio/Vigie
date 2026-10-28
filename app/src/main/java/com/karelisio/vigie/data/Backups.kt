@@ -76,7 +76,43 @@ data class BackupRecord(
 
 /** Copie présente dans le stockage. */
 @Serializable
-data class BackupObject(val key: String = "", val item: String = "", val size: Long = 0, val ts: Long = 0)
+data class BackupObject(
+    val key: String = "",
+    /** Dossier de l'élément (BackupItem.key). */
+    val item: String = "",
+    val size: Long = 0,
+    val ts: Long = 0,
+    /** Copie de sécurité faite avant la dernière restauration (agent 0.6.0). */
+    val safety: Boolean = false,
+)
+
+/** Demande de restauration : élément (BackupItem.id) et copie (BackupObject.key). */
+@Serializable
+data class BackupRestoreRequest(val item: String, val key: String)
+
+/** Volumes et dossiers se restaurent depuis l'appli ; les données de Vigie, à la main. */
+val BackupItem.restorable: Boolean get() = kind == "volume" || kind == "bind"
+
+/** Copies d'un dossier du stockage : la copie de sécurité de la dernière restauration à part. */
+data class BackupCopies(
+    val folder: String,
+    /** Élément actuel correspondant, null s'il n'existe plus. */
+    val item: BackupItem?,
+    val safety: BackupObject?,
+    /** De la plus récente à la plus ancienne. */
+    val copies: List<BackupObject>,
+)
+
+/** Regroupe les copies par élément, dans l'ordre de l'agent. */
+fun groupCopies(objects: List<BackupObject>, items: List<BackupItem>): List<BackupCopies> =
+    objects.groupBy { it.item }.map { (folder, list) ->
+        BackupCopies(
+            folder = folder,
+            item = items.firstOrNull { it.key == folder },
+            safety = list.filter { it.safety }.maxByOrNull { it.ts },
+            copies = list.filterNot { it.safety }.sortedByDescending { it.key },
+        )
+    }
 
 @Serializable
 data class BackupTestResult(val ok: Boolean = false, val message: String = "")
@@ -97,3 +133,7 @@ suspend fun Repository.backupObjects(): List<BackupObject> = api.get(server(), "
 suspend fun Repository.testBackupStorage(c: BackupConfig): BackupTestResult = api.post(server(), "/api/v1/backups/test", c)
 
 suspend fun Repository.runBackup(): AgentJob = api.postEmpty(server(), "/api/v1/backups/run")
+
+/** Lance la restauration d'une copie sur son élément (agent 0.6.0) : opération « restore ». */
+suspend fun Repository.restoreBackup(item: String, key: String): AgentJob =
+    api.post(server(), "/api/v1/backups/restore", BackupRestoreRequest(item, key))

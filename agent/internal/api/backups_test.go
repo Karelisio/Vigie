@@ -13,7 +13,63 @@ import (
 	"github.com/karelisio/vigie/agent/internal/backup"
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/store"
+	"github.com/karelisio/vigie/agent/internal/updater"
 )
+
+func TestBackupRestoreRoute(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upd := updater.New(nil, log, updater.Hooks{}, updater.Options{Enabled: true})
+	bk := backup.New(st, nil, upd, log, backup.Options{})
+	s := &Server{cfg: &config.Config{}, st: st, log: log, upd: upd, Backups: bk}
+	call := func(body string) (int, string) {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/backups/restore", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		s.backupRestore(w, r)
+		return w.Code, w.Body.String()
+	}
+
+	for body, want := range map[string]string{
+		`{"item":"vigie","key":"vigie/vigie/2026-10-28_0330.tar.gz"}`:                        "ne se restaurent pas depuis l'appli",
+		`{"item":"volume:sonarr_config","key":"vigie/sonarr_config/2026-10-28_0330.tar.gz"}`: "stockage incomplet",
+		`{"item":"volume:sonarr_config","key":"x","inconnu":1}`:                              "JSON invalide",
+	} {
+		if code, out := call(body); code != http.StatusBadRequest || !strings.Contains(out, want) {
+			t.Errorf("%s : %d %s", body, code, out)
+		}
+	}
+
+	if _, err := bk.Update(context.Background(), backup.Config{
+		Time: "03:30", Retention: 7, Prefix: "vigie", Endpoint: "https://s3.example.com", Region: "eu-paris-1", Bucket: "b",
+		AccessKey: "AK", SecretKey: "secret-du-stockage",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := call(`{"item":"volume:sonarr_config","key":"vigie/radarr/2026-10-28_0330.tar.gz"}`); code != http.StatusBadRequest || !strings.Contains(out, "copie invalide") {
+		t.Errorf("copie d'un autre élément : %d %s", code, out)
+	}
+	// Une opération est déjà en cours : 409.
+	release := make(chan struct{})
+	defer close(release)
+	if _, err := upd.Run("backup", "backup", "sauvegarde", func(context.Context, func(float64, string)) (string, error) {
+		<-release
+		return "", nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := call(`{"item":"volume:sonarr_config","key":"vigie/sonarr_config/2026-10-28_0330.tar.gz"}`); code != http.StatusConflict {
+		t.Errorf("opération en cours : %d %s", code, out)
+	}
+	audit, _ := st.AuditLog(context.Background(), 10)
+	if len(audit) != 4 || audit[0].Action != "restore" || audit[0].Target != "volume:sonarr_config ← 2026-10-28_0330.tar.gz" ||
+		!strings.HasPrefix(audit[0].Result, "refusé : ") {
+		t.Fatalf("journal : %+v", audit)
+	}
+}
 
 func TestBackupConfigMasksSecrets(t *testing.T) {
 	st, err := store.Open(t.TempDir())

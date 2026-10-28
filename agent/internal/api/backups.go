@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"path"
 	"time"
+	"unicode/utf8"
 
 	"github.com/karelisio/vigie/agent/internal/backup"
 )
@@ -72,6 +74,31 @@ func (s *Server) backupTest(w http.ResponseWriter, r *http.Request) {
 		msg = err.Error()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": err == nil, "message": msg})
+}
+
+// backupRestore lance la restauration d'une copie du stockage sur son élément : {item, key}.
+func (s *Server) backupRestore(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Item string `json:"item"`
+		Key  string `json:"key"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON invalide : "+err.Error())
+		return
+	}
+	job, err := s.Backups.Restore(in.Item, in.Key)
+	s.jobStarted(w, r, "restore", clip(in.Item, 200)+" ← "+clip(path.Base(in.Key), 100), job, err)
+}
+
+// clip tronque s à n octets au plus, sans couper un caractère (journal des actions).
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
 }
 
 func (s *Server) backupHistory(w http.ResponseWriter, r *http.Request) {

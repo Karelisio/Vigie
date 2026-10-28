@@ -156,7 +156,7 @@ L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et p
 - **Alerte de surconsommation après une mise à jour** : 6 h après, la mémoire ou le CPU d'un conteneur nettement au-dessus de la veille est signalé.
 - **Retour à la version précédente** : après une mise à jour par Vigie (bouton, stack, nuit), « Revenir à cette version » dans la fiche du conteneur, sa chronologie ou la notification de surconsommation. Le conteneur est recréé à l'identique avec l'image d'avant (re-téléchargée si le nettoyage l'a supprimée), et la version écartée est ignorée par les mises à jour automatiques jusqu'à la suivante (« Ne plus ignorer » pour la réautoriser).
 - **Accès partagés en lecture seule** (Réglages → Accès partagés) : un QR code ou un lien pour qu'un proche consulte l'état du serveur, sans pouvoir agir ni voir les logs et les secrets ; révocable à tout moment.
-- **Sauvegardes** chaque jour (ou à la demande) vers un stockage compatible S3 : volumes, dossiers montés et données de Vigie, compressés, avec rétention et arrêt facultatif du conteneur pendant la copie (Réglages → Sauvegardes, voir [plus bas](#sauvegardes)).
+- **Sauvegardes** chaque jour (ou à la demande) vers un stockage compatible S3 : volumes, dossiers montés et données de Vigie, compressés, avec rétention et arrêt facultatif du conteneur pendant la copie, et **restauration en un geste** depuis l'appli, avec copie de sécurité avant et retour en arrière possible (Réglages → Sauvegardes, voir [plus bas](#sauvegardes)).
 - **Noms de domaine** (Réglages → Noms de domaine) : date d'expiration lue chaque jour chez le registre (RDAP) pour les domaines de tes services et ceux que tu ajoutes, jours restants en couleur, bureau d'enregistrement ; alerte 30 jours avant (réglable), puis 7 jours avant et à l'expiration, close au renouvellement.
 - **Page d'état publique** (Réglages → Page d'état publique) : une page web à partager, sans compte ni appli, avec l'état des services et conteneurs choisis sous le nom que tu leur donnes, la disponibilité sur 90 jours et les incidents de la semaine ; adresse secrète, que tu peux changer à tout moment (voir [plus bas](#page-détat-publique)).
 - **Deux widgets** (serveur, services) redimensionnables aux couleurs du système, **tuile** de réglages rapides, **raccourcis** Conteneurs/Services, **mode hors ligne** avec l'heure de la dernière mise à jour.
@@ -190,11 +190,32 @@ Autres stockages : Backblaze B2 `https://s3.<région>.backblazeb2.com` (région 
 - **Données de Vigie** : copie cohérente de la base (historique, services, réglages, alertes, journal) et des fichiers de l'agent, **sans** les clés du stockage ni le token d'accès, qui ne quittent jamais l'agent.
 - Rétention : après chaque copie réussie, seules les N plus récentes de l'élément sont gardées (les autres fichiers du bucket ne sont jamais touchés).
 - Un échec envoie une alerte, même appli ouverte ; la réussite n'est notifiée que si l'appli est fermée. Les 30 dernières sauvegardes sont listées dans l'appli.
-- Limites : une opération à la fois (sauvegarde, mise à jour, nettoyage), 45 min au plus par sauvegarde, 156 Gio au plus par archive. La mémoire reste bornée (une partie de 16 Mio envoyée à la fois), quelle que soit la taille des données.
+- Limites : une opération à la fois (sauvegarde, restauration, mise à jour, nettoyage), 45 min au plus par sauvegarde ou restauration, 156 Gio au plus par archive. La mémoire reste bornée (une partie de 16 Mio envoyée à la fois), quelle que soit la taille des données.
+
+### Restaurer depuis l'appli (agent 0.6)
+
+Réglages › **Sauvegardes** › **Copies dans le stockage** › **Afficher les copies**, puis **Restaurer** sur la copie voulue (volume ou dossier monté). Après confirmation (empreinte ou code si le verrouillage est activé), l'agent :
+
+1. télécharge la copie et la dépose dans un conteneur auxiliaire, pendant que tes conteneurs tournent encore ;
+2. arrête les conteneurs qui utilisent l'élément ;
+3. envoie une **copie de sécurité** de l'état actuel au stockage (`<préfixe>/<élément>/avant-restauration_<AAAA-MM-JJ_HHMM>.tar.gz`) ;
+4. vérifie toute l'archive, vide l'élément puis y extrait la copie, propriétaires, droits et dates compris ;
+5. relance les conteneurs arrêtés (toujours, même en cas d'erreur) et vérifie qu'ils tournent.
+
+Si l'extraction échoue après avoir vidé l'élément, la copie de sécurité est remise automatiquement. Une archive invalide ou suspecte (chemin absolu, `..`, passage par un lien symbolique) est refusée avant toute modification. La progression s'affiche dans l'appli ; un échec envoie une alerte critique, même appli ouverte, et apparaît dans la chronologie des conteneurs concernés.
+
+**Annuler la dernière restauration** : la copie de sécurité apparaît à part, au-dessus des copies de l'élément ; la restaurer remet l'état d'avant (et garde à son tour l'état actuel en copie de sécurité). Une seule copie de sécurité est gardée par élément, jamais supprimée par la rétention.
+
+Bon à savoir :
+- L'auxiliaire (`vigie-restauration-…`) est créé à partir de l'image de l'agent, sans réseau ni accès à Docker, avec les seules capacités utiles (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`) ; il est ignoré par les alertes et supprimé à la fin.
+- La copie est déposée dans l'auxiliaire : il faut, le temps de l'opération, de la place libre pour la copie compressée en plus des données restaurées.
+- Les fichiers spéciaux (périphériques, tubes) ne sont pas recréés ; les attributs étendus et ACL ne sont pas restaurés.
+- Désactivée avec `VIGIE_ALLOW_UPDATES=false`. Derrière un socket-proxy, il faut `POST=1`.
+- Les **données de Vigie** ne se restaurent pas depuis l'appli : l'agent les utilise en permanence. Voir ci-dessous.
 
 ### Restaurer à la main
 
-Sur le VPS (terminal), dans un dossier de travail :
+Pour les données de Vigie, ou si l'agent ne répond plus. Sur le VPS (terminal), dans un dossier de travail :
 
 1. **Télécharge la copie** depuis la console de ton stockage (Oracle : Buckets › bucket › objet › ⋮ › **Télécharger**) puis copie-la sur le serveur, ou directement :
    ```
@@ -204,7 +225,7 @@ Sur le VPS (terminal), dans un dossier de travail :
      amazon/aws-cli --endpoint-url https://<namespace>.compat.objectstorage.eu-paris-1.oraclecloud.com \
      s3 cp s3://vigie-sauvegardes/vigie/sonarr_config/2026-10-28_0330.tar.gz .
    ```
-2. **Arrête le conteneur** qui utilise les données (Dockhand › conteneur › Stop).
+2. **Arrête le conteneur** qui utilise les données (Dockhand › conteneur › Stop) ; pour les données de Vigie, c'est `vigie-agent` lui-même.
 3. **Restaure** :
    - un volume (son contenu actuel est remplacé) :
      ```
@@ -248,7 +269,7 @@ La page n'affiche que les noms choisis : ni adresse, ni IP, ni image, ni message
 | `VIGIE_IGNORE` | — | conteneurs à ne jamais signaler (aussi possible avec le label `vigie.ignore=true`) |
 | `VIGIE_RATE_LIMIT` / `_BURST` | `10` / `60` | requêtes par seconde et rafale autorisées par IP |
 | `VIGIE_SHOW_QR` / `VIGIE_QR_INVERT` | `false` | réafficher / inverser le QR code |
-| `VIGIE_ALLOW_UPDATES` | `true` | autoriser les mises à jour d'images depuis l'appli (`false` : lecture et start/stop/restart seulement) |
+| `VIGIE_ALLOW_UPDATES` | `true` | autoriser les mises à jour d'images et les restaurations depuis l'appli (`false` : lecture et start/stop/restart seulement) |
 | `TZ` | `Europe/Paris` (compose) | fuseau des heures calmes |
 | `VIGIE_ORACLE` | auto | `true`/`false` pour forcer l'analyse Oracle Always Free (détectée via le noyau) |
 | `VIGIE_NET_MBPS` | auto | débit réseau de l'instance, pour le critère réseau d'Oracle |
@@ -265,7 +286,8 @@ La page n'affiche que les noms choisis : ni adresse, ni IP, ni image, ni message
 - Accès partagés : seule l'empreinte SHA-256 du jeton est conservée ; ils ne peuvent que consulter (ni action, ni réglage, ni logs, ni journal, ni canaux, debrid ou sauvegardes).
 - Canaux d'alerte et comptes debrid : jetons et clés restent sur l'agent, renvoyés masqués à l'appli (4 derniers caractères).
 - Sauvegardes : les clés du stockage restent sur l'agent. Elles ne sont jamais renvoyées à l'appli, ni écrites dans les logs, le journal ou la copie de la base ; changer l'adresse du stockage oblige à ressaisir la clé secrète. Comme les sauvegardes lisent le contenu des volumes choisis, garde le token aussi précieusement qu'un accès au serveur.
+- Restaurations : seulement une copie du stockage configuré, rangée dans le dossier de l'élément, sur un volume ou un dossier déjà monté par un conteneur (jamais un élément que l'agent modifie lui-même) ; extraction confinée à l'élément, dans un conteneur auxiliaire sans réseau, sans accès à Docker ni secret.
 
-Pour aller plus loin, tu peux placer un [socket-proxy](https://github.com/linuxserver/docker-socket-proxy) entre l'agent et Docker (`CONTAINERS=1`, `EVENTS=1`, `INFO=1`, `IMAGES=1`, `ALLOW_START=1`, `ALLOW_STOP=1`, `ALLOW_RESTARTS=1`, `POST=0` avec `VIGIE_ALLOW_UPDATES=false` ; pour les mises à jour depuis l'appli, ajoute `POST=1` et `NETWORKS=1`) et pointer `DOCKER_HOST` dessus.
+Pour aller plus loin, tu peux placer un [socket-proxy](https://github.com/linuxserver/docker-socket-proxy) entre l'agent et Docker (`CONTAINERS=1`, `EVENTS=1`, `INFO=1`, `IMAGES=1`, `ALLOW_START=1`, `ALLOW_STOP=1`, `ALLOW_RESTARTS=1`, `POST=0` avec `VIGIE_ALLOW_UPDATES=false` ; pour les mises à jour depuis l'appli, ajoute `POST=1` et `NETWORKS=1` ; pour les restaurations, `POST=1`) et pointer `DOCKER_HOST` dessus.
 
 L'API est décrite dans [`docs/API.md`](docs/API.md).

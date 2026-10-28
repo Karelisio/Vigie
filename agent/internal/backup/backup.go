@@ -35,9 +35,10 @@ const stampLayout = "2006-01-02_1504"
 
 // Options relie le service au reste de l'agent.
 type Options struct {
-	DataDir    string
-	SelfID     string                    // conteneur de l'agent : jamais arrêté ni proposé
-	NoteAction func(name, action string) // évite les fausses alertes pendant un arrêt
+	DataDir      string
+	SelfID       string                     // conteneur de l'agent : jamais arrêté ni proposé
+	NoteAction   func(name, action string)  // évite les fausses alertes pendant un arrêt
+	SetTransient func(name string, on bool) // masque le conteneur auxiliaire d'une restauration
 }
 
 type Service struct {
@@ -49,12 +50,15 @@ type Service struct {
 
 	part int // taille d'une partie d'envoi (réduite dans les tests)
 
+	// Restauration : attente de l'auxiliaire et délai avant de vérifier les conteneurs relancés.
+	poll, settle time.Duration
+
 	mu    sync.Mutex // configuration et historique
 	sched schedule
 }
 
 func New(st *store.Store, dk *docker.Client, upd *updater.Manager, log *slog.Logger, opt Options) *Service {
-	return &Service{st: st, dk: dk, upd: upd, log: log, opt: opt, part: partSize}
+	return &Service{st: st, dk: dk, upd: upd, log: log, opt: opt, part: partSize, poll: time.Second, settle: 8 * time.Second}
 }
 
 func (s *Service) note(name, action string) {
@@ -314,7 +318,7 @@ func (s *Service) prune(ctx context.Context, cl *s3Client, folder string, keep i
 }
 
 // Objects liste les copies présentes dans le stockage, par élément puis de la plus récente à la
-// plus ancienne.
+// plus ancienne (copie de sécurité d'une restauration en tête).
 func (s *Service) Objects(ctx context.Context) ([]Object, error) {
 	cfg, sec := s.load(ctx)
 	if err := cfg.storageReady(sec); err != nil {
@@ -335,8 +339,8 @@ func (s *Service) Objects(ctx context.Context) ([]Object, error) {
 	out := []Object{}
 	for _, o := range objs {
 		item, name, ok := strings.Cut(strings.TrimPrefix(o.Key, base), "/")
-		if ok && stampRe.MatchString(name) {
-			o.Item = item
+		if ok && (stampRe.MatchString(name) || safetyRe.MatchString(name)) {
+			o.Item, o.Safety = item, safetyRe.MatchString(name)
 			out = append(out, o)
 		}
 	}

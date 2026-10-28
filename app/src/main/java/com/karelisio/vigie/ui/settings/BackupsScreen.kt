@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -38,6 +39,8 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.automirrored.rounded.HelpOutline
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Visibility
@@ -53,6 +56,7 @@ import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -79,9 +83,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.karelisio.vigie.appContainer
+import com.karelisio.vigie.data.AgentJob
 import com.karelisio.vigie.data.ApiException
 import com.karelisio.vigie.data.BACKUP_SECRET_MASK
 import com.karelisio.vigie.data.BackupConfig
+import com.karelisio.vigie.data.BackupCopies
 import com.karelisio.vigie.data.BackupItem
 import com.karelisio.vigie.data.BackupObject
 import com.karelisio.vigie.data.BackupRecord
@@ -93,6 +99,9 @@ import com.karelisio.vigie.data.backupHistory
 import com.karelisio.vigie.data.backupItems
 import com.karelisio.vigie.data.backupObjects
 import com.karelisio.vigie.data.backupState
+import com.karelisio.vigie.data.groupCopies
+import com.karelisio.vigie.data.restorable
+import com.karelisio.vigie.data.restoreBackup
 import com.karelisio.vigie.data.runBackup
 import com.karelisio.vigie.data.saveBackupConfig
 import com.karelisio.vigie.data.testBackupStorage
@@ -188,6 +197,26 @@ class BackupsViewModel : ViewModel() {
         runCatching { repo.testBackupStorage(c) }.getOrElse { BackupTestResult(false, it.message ?: "Échec du test") }
 
     suspend fun run(): Result<Unit> = runCatching { jobId = repo.runBackup().id }
+
+    /** Identifiant de la restauration lancée depuis cet écran. */
+    var restoreJobId by mutableStateOf<String?>(null)
+        private set
+    private var restoreShown: String? = null
+
+    suspend fun restore(item: BackupItem, copy: BackupObject): Result<Unit> =
+        runCatching { restoreJobId = repo.restoreBackup(item.id, copy.key).id }
+
+    /** Vrai une seule fois, à la fin de la restauration lancée ici (résultat à signaler). */
+    fun takeRestoreResult(id: String): Boolean {
+        if (id != restoreJobId || id == restoreShown) return false
+        restoreShown = id
+        return true
+    }
+}
+
+/** Restauration depuis l'appli : visible hors lecture seule, bloquée (raison) pour un agent trop ancien. */
+private data class RestoreState(val visible: Boolean, val blocked: String?, val busy: Boolean, val job: AgentJob?) {
+    val allowed get() = visible && blocked == null
 }
 
 /** Sauvegardes vers un stockage compatible S3 : stockage, éléments, planification, historique. */
@@ -217,6 +246,28 @@ fun BackupsScreen(nav: NavHostController, vm: BackupsViewModel = viewModel()) {
 
     // Une fois la sauvegarde terminée : historique et prochaine échéance à jour.
     LaunchedEffect(job?.done) { if (job?.done == true) vm.refreshHistory() }
+
+    var restoring by remember { mutableStateOf<Pair<BackupItem, BackupObject>?>(null) }
+    val restoreJob = live.jobs.firstOrNull { it.id == vm.restoreJobId } ?: live.jobs.firstOrNull { it.kind == "restore" && !it.done }
+    val restore = RestoreState(
+        visible = !live.readOnly,
+        blocked = when {
+            !versionAtLeast(live.agentVersion, 0, 6) -> "Mets l'agent à jour (0.6.0 ou plus) pour restaurer depuis l'appli."
+            !live.updatesEnabled -> "Restauration désactivée sur cet agent (VIGIE_ALLOW_UPDATES=false)."
+            else -> null
+        },
+        busy = live.runningJob != null,
+        job = restoreJob,
+    )
+    // Fin de la restauration lancée ici : résultat, et copies à jour (nouvelle copie de sécurité).
+    LaunchedEffect(restoreJob?.done) {
+        val j = restoreJob ?: return@LaunchedEffect
+        if (j.done && vm.takeRestoreResult(j.id)) {
+            if (j.ok) haptics.confirm() else haptics.reject()
+            vm.loadObjects()
+            snackbar.showSnackbar(if (j.ok) "Restauration terminée" else "Échec de la restauration : détail dans « Copies dans le stockage »")
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -325,7 +376,12 @@ fun BackupsScreen(nav: NavHostController, vm: BackupsViewModel = viewModel()) {
                     }
                     item { HistoryCard(history, Modifier.cascade(4)) }
                     if (saved.storageReady) {
-                        item { ObjectsCard(objects, items.orEmpty(), vm::loadObjects, Modifier.cascade(5)) }
+                        item {
+                            ObjectsCard(objects, items.orEmpty(), restore, vm::loadObjects, Modifier.cascade(5)) { item, copy ->
+                                haptics.tick()
+                                restoring = item to copy
+                            }
+                        }
                     }
                 }
             }
@@ -396,7 +452,58 @@ fun BackupsScreen(nav: NavHostController, vm: BackupsViewModel = viewModel()) {
             dismissButton = { TextButton(onClick = { confirm = false }) { Text("Annuler") } },
         )
     }
+    restoring?.let { (item, copy) ->
+        // Seuls les conteneurs en marche sont arrêtés puis relancés.
+        val running = item.containers.filter { name -> live.containers.any { it.name == name && it.state == "running" } }
+        RestoreDialog(item, copy, running, onDismiss = { restoring = null }) {
+            restoring = null
+            scope.launch {
+                val what = if (copy.safety) "Annuler la dernière restauration de ${item.name}" else "Restaurer ${item.name}"
+                if (!guard(what)) return@launch
+                vm.restore(item, copy).exceptionOrNull()?.let {
+                    haptics.reject()
+                    snackbar.showSnackbar("Échec : ${it.message}")
+                }
+            }
+        }
+    }
 }
+
+/** Confirmation d'une restauration : ce qui est remplacé, arrêté, et la copie de sécurité faite avant. */
+@Composable
+private fun RestoreDialog(item: BackupItem, copy: BackupObject, running: List<String>, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    val stops = when (running.size) {
+        0 -> null
+        1 -> "${running[0]} sera arrêté pendant l'opération, puis relancé."
+        else -> "${running.joinToString(", ")} seront arrêtés pendant l'opération, puis relancés."
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(if (copy.safety) Icons.AutoMirrored.Rounded.Undo else Icons.Rounded.Restore, null) },
+        title = { Text(if (copy.safety) "Revenir à l'état d'avant ?" else "Restaurer ${item.name} ?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    if (copy.safety) {
+                        "${item.name} retrouve le contenu qu'il avait avant la dernière restauration (${copyDate(copy)})."
+                    } else {
+                        "Tout le contenu actuel de ${item.name} sera remplacé par la copie du ${copyDate(copy)}."
+                    },
+                )
+                stops?.let { Text(it) }
+                Text(
+                    "Une copie de sécurité de l'état actuel est d'abord envoyée au stockage : tu pourras revenir en arrière.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(if (copy.safety) "Revenir en arrière" else "Restaurer") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annuler") } },
+    )
+}
+
+/** Date d'une copie (envoi terminé), ou son nom si elle est inconnue. */
+private fun copyDate(o: BackupObject): String = if (o.ts > 0) Fmt.dateTime(o.ts) else o.key.substringAfterLast('/')
 
 /** Champs du stockage S3, test de connexion et aide pour Oracle Object Storage. */
 @Composable
@@ -701,20 +808,38 @@ private fun HistoryCard(history: List<BackupRecord>, modifier: Modifier) {
     }
 }
 
-/** Copies présentes dans le stockage, par élément (chargées à la demande). */
+/** Copies présentes dans le stockage, par élément (chargées à la demande), à restaurer depuis l'appli (agent 0.6). */
 @Composable
-private fun ObjectsCard(objects: Result<List<BackupObject>>?, items: List<BackupItem>, load: () -> Unit, modifier: Modifier) {
+private fun ObjectsCard(
+    objects: Result<List<BackupObject>>?,
+    items: List<BackupItem>,
+    restore: RestoreState,
+    load: () -> Unit,
+    modifier: Modifier,
+    onRestore: (BackupItem, BackupObject) -> Unit,
+) {
     var opened by remember { mutableStateOf(false) }
     val haptics = rememberHaptics()
     SectionCard(modifier.animateContentSize(), title = "Copies dans le stockage") {
+        restore.job?.let {
+            JobProgress(it)
+            Spacer(Modifier.height(12.dp))
+        }
         if (!opened) {
             Text(
-                "Pour restaurer, télécharge une copie depuis ton stockage (voir le README).",
+                if (restore.allowed) {
+                    "Choisis une copie à restaurer : les conteneurs qui l'utilisent sont arrêtés pendant l'opération, puis relancés."
+                } else {
+                    "Pour restaurer, télécharge une copie depuis ton stockage (voir le README)."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             TextButton(onClick = { haptics.tick(); opened = true; load() }) { Text("Afficher les copies") }
             return@SectionCard
+        }
+        if (restore.visible && restore.blocked != null) {
+            Text(restore.blocked, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         val list = objects?.getOrNull()
         when {
@@ -728,23 +853,74 @@ private fun ObjectsCard(objects: Result<List<BackupObject>>?, items: List<Backup
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            else -> list.groupBy { it.item }.forEach { (folder, copies) ->
+            else -> groupCopies(list, items).forEach { CopiesGroup(it, restore, onRestore) }
+        }
+    }
+}
+
+/** Copies d'un élément : celle d'avant la dernière restauration à part, puis les sauvegardes. */
+@Composable
+private fun CopiesGroup(g: BackupCopies, restore: RestoreState, onRestore: (BackupItem, BackupObject) -> Unit) {
+    val item = g.item
+    val target = item?.takeIf { restore.allowed && it.restorable }
+    Text(item?.name ?: g.folder, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp))
+    val note = when {
+        !restore.allowed -> null
+        item == null -> "Plus aucun conteneur ne l'utilise : restauration impossible depuis l'appli."
+        item.kind == "vigie" -> "À restaurer à la main : l'agent utilise ces données en permanence (marche à suivre dans le README, section Sauvegardes)."
+        else -> null
+    }
+    note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    g.safety?.let { s ->
+        if (target == null) {
+            CopyRow(s, "Avant la dernière restauration", enabled = false, onRestore = null)
+            return@let
+        }
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        ) {
+            Column(Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.History, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Avant la dernière restauration", style = MaterialTheme.typography.labelLarge)
+                }
                 Text(
-                    items.firstOrNull { it.key == folder }?.name ?: folder,
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(top = 8.dp),
+                    "${copyDate(s)} · ${Fmt.bytes(s.size)}",
+                    style = MaterialTheme.typography.bodySmall.numeric(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                copies.forEach { o ->
-                    Row(Modifier.padding(vertical = 2.dp)) {
-                        Text(
-                            o.key.substringAfterLast('/'),
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(Fmt.bytes(o.size), style = MaterialTheme.typography.bodySmall.numeric(), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                OutlinedButton(
+                    onClick = { onRestore(target, s) },
+                    enabled = !restore.busy,
+                    shapes = ButtonDefaults.shapes(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                ) {
+                    Icon(Icons.AutoMirrored.Rounded.Undo, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Annuler la dernière restauration")
                 }
             }
+        }
+    }
+    g.copies.forEach { o -> CopyRow(o, null, enabled = !restore.busy, onRestore = target?.let { { onRestore(it, o) } }) }
+}
+
+@Composable
+private fun CopyRow(o: BackupObject, label: String?, enabled: Boolean, onRestore: (() -> Unit)?) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(label ?: copyDate(o), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                listOfNotNull(label?.let { copyDate(o) }, Fmt.bytes(o.size)).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall.numeric(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (onRestore != null) {
+            TextButton(onClick = onRestore, enabled = enabled) { Text("Restaurer") }
         }
     }
 }

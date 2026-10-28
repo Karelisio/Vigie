@@ -45,9 +45,11 @@ func newEnv(t *testing.T) *env {
 	}
 	t.Cleanup(func() { st.Close() })
 	fd, dsrv := newFakeDocker(t)
+	hostRoot := bindMount("/", "/host/root")
+	hostRoot["RW"] = false
 	fd.containers = []*fakeCtr{
 		{ID: "self", Name: "vigie-agent", Running: true, Mounts: []map[string]any{
-			volumeMount("vigie_vigie-data", "/data"), bindMount("/var/run/docker.sock", "/var/run/docker.sock"), bindMount("/", "/host/root"),
+			volumeMount("vigie_vigie-data", "/data"), bindMount("/var/run/docker.sock", "/var/run/docker.sock"), hostRoot,
 		}},
 		{ID: "s1", Name: "sonarr", Running: true, StopTimeout: 45, Mounts: []map[string]any{
 			volumeMount("sonarr_config", "/config"), bindMount("/etc/localtime", "/etc/localtime"), volumeMount(anonymous, "/cache"),

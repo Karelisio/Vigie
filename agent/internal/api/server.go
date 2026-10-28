@@ -145,6 +145,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/backups/test", s.backupTest)
 	mux.HandleFunc("GET /api/v1/backups/history", s.backupHistory)
 	mux.HandleFunc("GET /api/v1/backups/objects", s.backupObjects)
+	mux.HandleFunc("POST /api/v1/backups/restore", s.backupRestore)
 
 	mux.HandleFunc("GET /api/v1/domains", s.getDomains)
 	mux.HandleFunc("POST /api/v1/domains/check", s.checkDomains)

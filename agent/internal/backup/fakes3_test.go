@@ -34,6 +34,7 @@ type fakeS3 struct {
 	seq      int
 	maxBody  int            // plus gros corps reçu
 	failOnce map[string]int // « méthode chemin?requête » → nombre d'échecs 500 à simuler
+	denyPut  string         // envois refusés (403) pour les clés qui commencent ainsi
 	log      []string
 }
 
@@ -190,6 +191,10 @@ func (f *fakeS3) serve(w http.ResponseWriter, r *http.Request) {
 		s3Fail(w, http.StatusNotFound, "NoSuchBucket")
 		return
 	}
+	if f.denyPut != "" && key != "" && strings.HasPrefix(key, f.denyPut) && (r.Method == http.MethodPut || r.Method == http.MethodPost) {
+		s3Fail(w, http.StatusForbidden, "AccessDenied")
+		return
+	}
 	switch {
 	case r.Method == http.MethodGet && key == "" && q.Get("list-type") == "2":
 		f.listV2(w, q)
@@ -212,6 +217,14 @@ func (f *fakeS3) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodDelete && q.Has("uploadId"):
 		delete(f.uploads, q.Get("uploadId"))
 		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodGet && key != "":
+		obj, ok := f.objects[key]
+		if !ok {
+			s3Fail(w, http.StatusNotFound, "NoSuchKey")
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(obj)))
+		_, _ = w.Write(obj)
 	case r.Method == http.MethodPut:
 		f.objects[key], f.modified[key] = body, time.Now()
 		w.Header().Set("ETag", `"simple"`)

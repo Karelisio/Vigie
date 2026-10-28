@@ -134,7 +134,8 @@ Toutes les routes sont sous `/api/v1/backups`.
 | POST | `/api/v1/backups/run` | lance une sauvegarde (202 : `job`, `kind: "backup"`) |
 | POST | `/api/v1/backups/test` | `config` facultative, pas enregistrée : écrit, liste puis supprime `<prefix>/.vigie-test`. Réponse 200 `{ok, message}` |
 | GET | `/api/v1/backups/history` | 30 dernières sauvegardes, la plus récente en premier : `ts, duration (ms), size (octets envoyés), ok, error?, trigger (manual/schedule), items[]` (`id, name, key?, size, raw, ok, error?`) |
-| GET | `/api/v1/backups/objects` | copies présentes dans le stockage : `key, item, size, ts` (5000 au plus). 409 si le stockage n'est pas configuré, 502 s'il répond en erreur |
+| GET | `/api/v1/backups/objects` | copies présentes dans le stockage : `key, item, size, ts, safety` (5000 au plus ; `safety` : copie de sécurité d'avant la dernière restauration, agent 0.6.0). 409 si le stockage n'est pas configuré, 502 s'il répond en erreur |
+| POST | `/api/v1/backups/restore` | `{item, key}` : restaure la copie `key` (une clé de `objects`, du dossier de l'élément) sur l'élément `item` (`volume:<nom>` ou `bind:<chemin>`), agent 0.6.0. 202 : `job` (`kind: "restore"`, `action: "restore"`, `target` : nom de l'élément) ; 409 si une opération est en cours ; 403 avec `VIGIE_ALLOW_UPDATES=false` ; 400 sinon (élément `vigie`, copie d'un autre élément ou mal nommée, stockage incomplet, JSON invalide) |
 
 - `items[]` de la configuration : `{id, stop}`. `id` vaut `vigie` (base SQLite et fichiers de l'agent), `volume:<nom>` (volume nommé) ou `bind:<chemin sur l'hôte>` (dossier monté dans un conteneur). `stop` : les conteneurs en marche qui l'utilisent sont arrêtés pendant la copie, puis toujours redémarrés.
 - `time` : HH:MM selon `TZ` ; `retention` : copies gardées par élément (1 à 365, 7 par défaut) ; `prefix` : dossier dans le bucket (`vigie` par défaut, peut être vide) ; `endpoint` : `https://hôte` sans chemin (adressage « path-style »).
@@ -142,6 +143,17 @@ Toutes les routes sont sous `/api/v1/backups`.
 - Copies : `<prefix>/<key>/<AAAA-MM-JJ_HHMM>.tar.gz` (heure locale). La rétention ne supprime que les fichiers nommés ainsi.
 - Planification (`schedule`) : chaque jour à `time`, une fois par jour au plus ; si une opération est en cours, 3 nouveaux essais à 10 min d'intervalle.
 - Alertes : un échec envoie l'alerte `backup` (critical) même appli ouverte ; la réussite suivante la résout. Une réussite sans échec préalable n'est notifiée (`job`) que si l'appli est fermée.
+
+Restauration (`POST /api/v1/backups/restore`, agent 0.6.0), sous le verrou des opérations (45 min au plus) :
+
+1. la copie est lue en flux dans le stockage et déposée (`PUT /containers/{id}/archive`) dans un conteneur auxiliaire `vigie-restauration-<n>` créé à partir de l'image de l'agent (labels `vigie.ignore` et `vigie.helper`, sans réseau, sans accès à Docker ni variable de l'agent, root avec les seules capacités `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, 256 Mio, `no-new-privileges`), qui monte l'élément sur `/target` ;
+2. les conteneurs en marche qui utilisent l'élément sont arrêtés (délai d'arrêt du conteneur) ;
+3. copie de sécurité de l'état actuel : `<prefix>/<key>/avant-restauration_<AAAA-MM-JJ_HHMM>.tar.gz` (secondes ajoutées si ce nom est celui de la copie restaurée). Une seule est gardée par élément (les précédentes sont supprimées après une restauration réussie) ; la rétention ne la touche jamais ;
+4. l'auxiliaire (mode `VIGIE_HELPER_RESTORE` du binaire) vérifie toute l'archive (gzip, tar ; refus des chemins absolus, des `..`, des entrées hors du dossier de premier niveau et de tout passage par un lien symbolique de l'archive), vide `/target` sans suivre les liens puis extrait en retirant le premier niveau (propriétaires, droits, dates ; liens symboliques et physiques ; périphériques et tubes ignorés). Les écritures passent par `os.Root` : rien ne peut sortir de `/target`. Un élément monté comme fichier est réécrit en place. Bilan : dernière ligne de sa sortie (`vigie-restore {ok, touched, error, entries, files, bytes, skipped}`), code 0, 2 (archive refusée, rien modifié) ou 3 (échec après modification) ;
+5. en cas d'échec après modification, un second auxiliaire remet la copie de sécurité ;
+6. les conteneurs arrêtés sont toujours relancés, même en cas d'erreur, puis vérifiés 8 s plus tard (en marche, pas en boucle de redémarrage). L'auxiliaire est toujours supprimé (`force`, `v`).
+
+Refus : l'élément `vigie` (l'agent utilise ses données en permanence : restauration à la main, voir README), un élément introuvable, un élément que l'agent monte en écriture, un agent qui ne tourne pas dans Docker. Fin : alerte `restore` (critical, `target` : nom de l'élément) en cas d'échec, même appli ouverte, résolue par la restauration réussie suivante du même élément ; sinon notification `job` si l'appli est fermée. Journal : `restore` (lancement ou refus, `target` : `<item> ← <copie>`) puis `résultat`. Chronologie de chaque conteneur qui utilise l'élément : événement `restore` (`detail` : la copie) ou `restore_failed` (`detail` : l'erreur).
 
 ## Stockage (agent 0.6.0)
 

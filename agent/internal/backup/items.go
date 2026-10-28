@@ -100,7 +100,7 @@ func stopDelay(cfg map[string]any) time.Duration {
 	return 10 * time.Second
 }
 
-// sources recense les éléments montés dans les conteneurs, l'agent excepté.
+// sources recense les éléments montés dans les conteneurs, hors agent et conteneurs auxiliaires.
 func (s *Service) sources(ctx context.Context) (map[string]*source, error) {
 	list, err := s.dk.List(ctx)
 	if err != nil {
@@ -108,7 +108,7 @@ func (s *Service) sources(ctx context.Context) (map[string]*source, error) {
 	}
 	out := map[string]*source{}
 	for _, c := range list {
-		if c.ID == s.opt.SelfID {
+		if c.ID == s.opt.SelfID || c.Labels["vigie.helper"] == "true" {
 			continue
 		}
 		in, err := s.dk.InspectFull(ctx, c.ID)

@@ -48,6 +48,10 @@ func main() {
 	if id := os.Getenv("VIGIE_HELPER_REPLACE"); id != "" {
 		os.Exit(runHelper(log, id))
 	}
+	// Conteneur auxiliaire d'une restauration : remplace le contenu de /target par l'archive déposée.
+	if os.Getenv(backup.HelperEnv) != "" {
+		os.Exit(backup.RunRestoreHelperFromEnv(os.Stdout))
+	}
 	if err := run(log); err != nil {
 		log.Error("arrêt", "erreur", err)
 		os.Exit(1)
@@ -153,6 +157,10 @@ func run(log *slog.Logger) error {
 				eng.NotifyBackup(j.OK, j.Message, j.Error)
 				return
 			}
+			if j.Kind == "restore" {
+				eng.NotifyRestore(j.Target, j.OK, j.Message, j.Error)
+				return
+			}
 			if j.Kind != "self" || !j.OK {
 				eng.NotifyJob(j.Title(), j.Body(), j.OK)
 			}
@@ -185,7 +193,9 @@ func run(log *slog.Logger) error {
 	apiSrv.LogWatch = lw
 	apiSrv.AutoHeal = heal
 	apiSrv.Debrid = dm
-	bk := backup.New(st, dk, upd, log, backup.Options{DataDir: cfg.DataDir, SelfID: mon.SelfID(), NoteAction: mon.NoteAction})
+	bk := backup.New(st, dk, upd, log, backup.Options{
+		DataDir: cfg.DataDir, SelfID: mon.SelfID(), NoteAction: mon.NoteAction, SetTransient: mon.SetTransient,
+	})
 	apiSrv.Backups = bk
 	// Stockage : prévision du disque (toutes les heures) et taille des volumes (toutes les 6 h).
 	sto := storage.New(ctx, st, dk, mon.Snapshot, set.Get, log)

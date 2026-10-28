@@ -112,9 +112,8 @@ func (c *s3Client) do(ctx context.Context, method, key string, q url.Values, bod
 	return nil, err
 }
 
-func (c *s3Client) once(ctx context.Context, method, key string, q url.Values, body []byte, out any) (http.Header, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
+// request prépare une requête signée. key vide : requête sur le bucket.
+func (c *s3Client) request(ctx context.Context, method, key string, q url.Values, body []byte) (*http.Request, error) {
 	path := "/" + c.bucket
 	if key != "" {
 		path += "/" + key
@@ -138,6 +137,26 @@ func (c *s3Client) once(ctx context.Context, method, key string, q url.Values, b
 		headers: map[string]string{"host": req.URL.Host, "x-amz-date": now.Format(amzDate), "x-amz-content-sha256": payload},
 	}
 	req.Header.Set("Authorization", authorization(sig, c.cred, now))
+	return req, nil
+}
+
+// errorOf décode la réponse d'erreur du stockage.
+func errorOf(status int, raw []byte) *s3Error {
+	e := &s3Error{Status: status}
+	_ = xml.Unmarshal(raw, e)
+	if e.Code == "" {
+		e.Code = http.StatusText(status)
+	}
+	return e
+}
+
+func (c *s3Client) once(ctx context.Context, method, key string, q url.Values, body []byte, out any) (http.Header, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	req, err := c.request(ctx, method, key, q, body)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
@@ -149,12 +168,7 @@ func (c *s3Client) once(ctx context.Context, method, key string, q url.Values, b
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		e := &s3Error{Status: resp.StatusCode}
-		_ = xml.Unmarshal(raw, e)
-		if e.Code == "" {
-			e.Code = http.StatusText(resp.StatusCode)
-		}
-		return nil, e
+		return nil, errorOf(resp.StatusCode, raw)
 	}
 	// CompleteMultipartUpload peut répondre 200 avec une erreur dans le corps.
 	if bytes.Contains(raw[:min(len(raw), 256)], []byte("<Error>")) {
@@ -250,12 +264,56 @@ func (c *s3Client) Upload(ctx context.Context, key string, r io.Reader, buf []by
 	return total, nil
 }
 
+// open lit l'objet key en flux et renvoie son corps (à fermer) et sa taille. Les nouveaux essais
+// ne portent que sur l'ouverture : une coupure pendant la lecture est une erreur pour l'appelant.
+func (c *s3Client) open(ctx context.Context, key string) (io.ReadCloser, int64, error) {
+	var err error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, 0, ctx.Err()
+			case <-time.After(c.retryGap * time.Duration(i)):
+			}
+		}
+		var body io.ReadCloser
+		var size int64
+		body, size, err = c.openOnce(ctx, key)
+		if err == nil || !retryable(err) {
+			return body, size, err
+		}
+	}
+	return nil, 0, err
+}
+
+func (c *s3Client) openOnce(ctx context.Context, key string) (io.ReadCloser, int64, error) {
+	req, err := c.request(ctx, http.MethodGet, key, nil, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	if resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return nil, 0, errorOf(resp.StatusCode, raw)
+	}
+	if resp.ContentLength < 0 {
+		resp.Body.Close()
+		return nil, 0, errors.New("stockage : taille de la copie inconnue")
+	}
+	return resp.Body, resp.ContentLength, nil
+}
+
 // Object est une sauvegarde présente dans le stockage.
 type Object struct {
-	Key  string `json:"key"`
-	Item string `json:"item"` // dossier de l'élément
-	Size int64  `json:"size"`
-	TS   int64  `json:"ts"` // dernière modification (ms)
+	Key    string `json:"key"`
+	Item   string `json:"item"` // dossier de l'élément
+	Size   int64  `json:"size"`
+	TS     int64  `json:"ts"`     // dernière modification (ms)
+	Safety bool   `json:"safety"` // copie de sécurité faite avant la dernière restauration
 }
 
 // list renvoie les objets dont la clé commence par prefix (au plus limit).
