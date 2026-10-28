@@ -42,3 +42,11 @@ func (s *Store) Top(ctx context.Context, r Range) ([]Consumer, error) {
 	}
 	return out, rows.Err()
 }
+
+// CtrAverage renvoie les moyennes CPU (%) et mémoire (octets) d'un conteneur sur [from, to[, à partir
+// des données minute (26 h), et le nombre de minutes mesurées.
+func (s *Store) CtrAverage(ctx context.Context, name string, from, to time.Time) (cpu, mem float64, n int, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(avg(cpu), 0), COALESCE(avg(mem_bytes), 0), count(*)
+		FROM ctr_minute WHERE name = ? AND ts >= ? AND ts < ?`, name, from.UnixMilli(), to.UnixMilli()).Scan(&cpu, &mem, &n)
+	return cpu, mem, n, err
+}

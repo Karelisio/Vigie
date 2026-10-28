@@ -23,6 +23,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/logwatch"
 	"github.com/karelisio/vigie/agent/internal/monitor"
 	"github.com/karelisio/vigie/agent/internal/qr"
+	"github.com/karelisio/vigie/agent/internal/regression"
 	"github.com/karelisio/vigie/agent/internal/settings"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/system"
@@ -107,6 +108,9 @@ func run(log *slog.Logger) error {
 		lw.Reload()
 	}
 
+	// Consommation avant / après chaque mise à jour.
+	reg := regression.New(st, set.Get, eng.NotifyRegression, log)
+
 	upd := updater.New(dk, log, updater.Hooks{
 		NoteAction:   mon.NoteAction,
 		SetTransient: mon.SetTransient,
@@ -118,6 +122,15 @@ func run(log *slog.Logger) error {
 				result = j.Error
 			}
 			st.Audit(context.Background(), "agent", "résultat", j.Target, result+" — "+j.Message, "vigie")
+			if j.Action == "update" && j.Kind != "self" {
+				var updated []string
+				for _, r := range j.Results {
+					if r.Updated && r.Name != "" {
+						updated = append(updated, r.Name)
+					}
+				}
+				reg.OnUpdated(context.Background(), updated, time.UnixMilli(j.FinishedAt))
+			}
 			if j.Kind != "self" || !j.OK {
 				eng.NotifyJob(j.Title(), j.Body(), j.OK)
 			}
@@ -149,6 +162,7 @@ func run(log *slog.Logger) error {
 	banner(log, cfg, mon)
 
 	go mon.Run(ctx)
+	go reg.Run(ctx)
 	go runner.Run(ctx)
 	go updater.NewNightly(upd, mon, st, log).Run(ctx)
 	go lw.Run(ctx)

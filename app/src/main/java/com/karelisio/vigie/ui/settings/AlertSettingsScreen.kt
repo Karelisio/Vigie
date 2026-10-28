@@ -29,6 +29,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.automirrored.rounded.TrendingUp
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.NewReleases
 import androidx.compose.material.icons.rounded.NotificationsOff
@@ -235,6 +236,14 @@ fun AlertSettingsScreen(nav: NavHostController, vm: AlertSettingsViewModel = vie
                                 "Libère l'espace disque après une mise à jour réussie",
                                 s.pruneImages,
                             ) { on -> haptics.toggle(on); draft = s.copy(pruneImages = on) }
+                            if (versionAtLeast(live.agentVersion, 0, 5)) {
+                                Spacer(Modifier.height(8.dp))
+                                ToggleRow(
+                                    Icons.AutoMirrored.Rounded.TrendingUp, "Surconsommation après une mise à jour",
+                                    "Prévenir si un conteneur consomme nettement plus de RAM ou de CPU 6 h après sa mise à jour",
+                                    s.regressionAlert,
+                                ) { on -> haptics.toggle(on); draft = s.copy(regressionAlert = on) }
+                            }
                         }
                     }
                     item {
