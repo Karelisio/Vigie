@@ -57,6 +57,7 @@ internal fun StackHeader(
     busy: Boolean,
     onAction: (String) -> Unit,
     onLogs: () -> Unit,
+    logsAllowed: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     var menu by remember { mutableStateOf(false) }
@@ -80,19 +81,22 @@ internal fun StackHeader(
                     color = scheme.onSecondaryContainer.copy(alpha = 0.8f),
                 )
             }
-            if (project.isNotEmpty()) {
+            // Lecture seule : ni actions, ni logs, donc pas de menu.
+            if (project.isNotEmpty() && (actions || logsAllowed)) {
                 Box {
                     IconButton(onClick = { haptics.tick(); menu = true }) {
                         Icon(Icons.Rounded.MoreVert, "Actions de la stack", tint = scheme.onSecondaryContainer)
                     }
                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Logs de la stack") },
-                            leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Notes, null) },
-                            onClick = { menu = false; onLogs() },
-                        )
+                        if (logsAllowed) {
+                            DropdownMenuItem(
+                                text = { Text("Logs de la stack") },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Notes, null) },
+                                onClick = { menu = false; onLogs() },
+                            )
+                        }
                         if (actions) {
-                            HorizontalDivider()
+                            if (logsAllowed) HorizontalDivider()
                             @Composable
                             fun Item(action: String, icon: ImageVector) {
                                 DropdownMenuItem(

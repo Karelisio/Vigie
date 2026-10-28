@@ -395,6 +395,7 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
                             members = all.filter { it.project == project },
                             updatesEnabled = state.updatesEnabled,
                             actions = state.stackActions && !state.readOnly,
+                            logsAllowed = !state.readOnly,
                             busy = state.runningJob != null,
                             onAction = { action ->
                                 haptics.tick()

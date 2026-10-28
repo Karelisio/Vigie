@@ -250,7 +250,7 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
                 Text("Logs en direct")
             }
         }
-        if (c.project.isNotEmpty()) {
+        if (c.project.isNotEmpty() && !state.readOnly) {
             Spacer(Modifier.height(8.dp))
             com.karelisio.vigie.ui.logs.StackLogsButton(c.project, Modifier.padding(horizontal = 16.dp).cascade(0)) {
                 nav.navigate(com.karelisio.vigie.ui.navigation.StackLogsRoute(c.project))
