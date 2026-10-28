@@ -102,3 +102,28 @@ func debridNotification(s debrid.Status, level int, now time.Time) Notification 
 	}
 	return n
 }
+
+// OnDebridServices prévient quand un service debrid ne répond plus (panne confirmée par deux vérifications
+// d'affilée), puis quand il répond de nouveau. Réglage : DebridDownAlert.
+func (e *Engine) OnDebridServices(list []debrid.Service) {
+	for _, s := range list {
+		key := "debrid-service:" + s.Provider
+		e.mu.Lock()
+		active := e.active[key]
+		e.mu.Unlock()
+		switch {
+		case s.Confirmed() && !active && e.set.Get().DebridDownAlert:
+			e.fire(key, Notification{
+				Kind: "debrid", Severity: "critical", Target: s.Name,
+				Title: s.Name + " ne répond plus",
+				Body:  s.Detail + ". Les addons qui l'utilisent ne trouvent plus de liens.",
+			})
+		case s.State != debrid.Down && active:
+			n := Notification{Kind: "debrid", Severity: "info", Target: s.Name, Title: s.Name + " répond de nouveau"}
+			if k := len(s.Incidents); k > 0 && s.Incidents[k-1].End > 0 {
+				n.Body = "Panne de " + humanDuration(time.UnixMilli(s.Incidents[k-1].End).Sub(time.UnixMilli(s.Incidents[k-1].Start))) + "."
+			}
+			e.resolve(key, n)
+		}
+	}
+}

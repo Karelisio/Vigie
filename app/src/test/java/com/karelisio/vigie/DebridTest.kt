@@ -66,4 +66,26 @@ class DebridTest {
         assertEquals("critical", channels.channels.single().minLevel)
         assertEquals("••••Dsaw", channels.channels.single().botToken)
     }
+
+    @Test
+    fun servicesParsedAndBucketed() {
+        val json = """{"accounts":[],"services":[{"provider":"realdebrid","name":"Real-Debrid","state":"down","detail":"délai dépassé",
+            "latency_ms":15000,"since":${now - 600_000},"checked_at":$now,"failures":2,"uptime_24h":50,
+            "history":[{"ts":${now - 3_600_000},"s":"up","ms":200},{"ts":${now - 60_000},"s":"down","ms":15000}],
+            "incidents":[{"start":${now - 600_000},"end":0,"cause":"délai dépassé"}]}]}"""
+        val svc = VigieJson.decodeFromString(DebridState.serializer(), json).services.single()
+        assertEquals("critical", svc.tone)
+        assertEquals(2, svc.failures)
+        assertEquals("down", svc.history.last().state)
+        assertEquals(0L, svc.incidents.single().end)
+        assertTrue(svc.summary(now).startsWith("En panne depuis "))
+        val buckets = svc.buckets(now)
+        assertEquals(48, buckets.size)
+        assertEquals(2, buckets.sumOf { it.total })
+        assertEquals(1, buckets.sumOf { it.ok })
+        assertEquals("En ligne · 230 ms", svc.copy(state = "up", latencyMs = 230).summary(now))
+        assertEquals("Ralenti : réponse lente (6.2 s)", svc.copy(state = "degraded", detail = "réponse lente (6.2 s)").summary(now))
+        // Agent 0.5 : pas de services.
+        assertTrue(VigieJson.decodeFromString(DebridState.serializer(), """{"accounts":[]}""").services.isEmpty())
+    }
 }

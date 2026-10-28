@@ -151,7 +151,7 @@ L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et p
 - **Surveillance depuis le téléphone** : toutes les 15 min, l'appli vérifie que chaque serveur répond ; s'il ne répond plus (agent ou VPS tombé), une notification le signale, avec la cause.
 - **Logs d'une stack** : tous les conteneurs d'un projet compose en direct, fusionnés, et sélection de lignes à copier ou partager.
 - **Canaux d'alerte** en plus des notifications : Telegram, Discord ou ntfy, toutes les alertes ou seulement les critiques (Réglages → Canaux d'alerte).
-- **Comptes debrid** (Real-Debrid, AllDebrid, TorBox, Premiumize) : jours de premium restants sur l'accueil, alerte 7 jours puis 1 jour avant la fin ou si la clé est refusée.
+- **Comptes debrid** (Real-Debrid, AllDebrid, TorBox, Premiumize) : état du service vérifié toutes les 5 min (en ligne, ralenti, en panne, disponibilité sur 24 h et historique des pannes) avec alerte quand il ne répond plus, jours de premium restants sur l'accueil, alerte 7 jours puis 1 jour avant la fin ou si la clé est refusée.
 - **Alerte de surconsommation après une mise à jour** : 6 h après, la mémoire ou le CPU d'un conteneur nettement au-dessus de la veille est signalé.
 - **Accès partagés en lecture seule** (Réglages → Accès partagés) : un QR code ou un lien pour qu'un proche consulte l'état du serveur, sans pouvoir agir ni voir les logs et les secrets ; révocable à tout moment.
 - **Sauvegardes** chaque jour (ou à la demande) vers un stockage compatible S3 : volumes, dossiers montés et données de Vigie, compressés, avec rétention et arrêt facultatif du conteneur pendant la copie (Réglages → Sauvegardes, voir [plus bas](#sauvegardes)).

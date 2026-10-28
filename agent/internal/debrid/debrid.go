@@ -1,5 +1,6 @@
 // Package debrid vérifie les comptes debrid (Real-Debrid, AllDebrid, TorBox, Premiumize) :
-// clé acceptée, premium actif et date d'expiration. Les clés restent sur l'agent.
+// clé acceptée, premium actif et date d'expiration, et suit l'état de chaque service (en ligne,
+// ralenti, en panne). Les clés restent sur l'agent.
 package debrid
 
 import (
@@ -27,9 +28,22 @@ const (
 	Premiumize = "premiumize"
 
 	accountsKey  = "debrid_accounts"
-	interval     = 6 * time.Hour
+	servicesKey  = "debrid_services"
+	interval     = 5 * time.Minute
+	confirmAfter = time.Minute // nouvel essai rapproché après un premier échec
 	checkTimeout = 15 * time.Second
+	slowAfter    = 5 * time.Second // au-delà, le service est considéré comme ralenti
 	maxAccounts  = 10
+	historySpan  = 24 * time.Hour
+	incidentSpan = 30 * 24 * time.Hour
+	maxIncidents = 20
+)
+
+// États d'un service debrid.
+const (
+	Up       = "up"
+	Degraded = "degraded"
+	Down     = "down"
 )
 
 // providers : identifiant → nom affiché.
@@ -63,6 +77,9 @@ type Status struct {
 	Error     string `json:"error,omitempty"`
 	Refused   bool   `json:"refused"`    // clé refusée par le fournisseur
 	CheckedAt int64  `json:"checked_at"` // 0 : pas encore vérifié
+
+	service string        // état du service vu par cette vérification
+	latency time.Duration // durée de la requête
 }
 
 // Name renvoie le nom du compte : le fournisseur, suivi du libellé s'il en diffère.
@@ -74,9 +91,42 @@ func (s Status) Name() string {
 	return name
 }
 
-// State est l'état de tous les comptes.
+// Point est le résultat d'une vérification d'un service.
+type Point struct {
+	TS        int64  `json:"ts"`
+	State     string `json:"s"`
+	LatencyMS int64  `json:"ms"`
+}
+
+// Incident est une panne d'un service (End à 0 : en cours).
+type Incident struct {
+	Start int64  `json:"start"`
+	End   int64  `json:"end"`
+	Cause string `json:"cause"`
+}
+
+// Service est l'état d'un fournisseur, déduit des vérifications de ses comptes.
+type Service struct {
+	Provider  string     `json:"provider"`
+	Name      string     `json:"name"`
+	State     string     `json:"state"`            // up, degraded ou down
+	Detail    string     `json:"detail,omitempty"` // cause d'une panne ou d'un ralentissement
+	LatencyMS int64      `json:"latency_ms"`
+	Since     int64      `json:"since"` // début de l'état actuel (ms Unix)
+	CheckedAt int64      `json:"checked_at"`
+	Failures  int        `json:"failures"`   // vérifications en panne d'affilée
+	Uptime    float64    `json:"uptime_24h"` // % de vérifications sans panne sur 24 h, -1 sans données
+	History   []Point    `json:"history"`    // 24 h
+	Incidents []Incident `json:"incidents"`  // 30 jours, la plus récente en dernier
+}
+
+// Confirmed indique une panne vérifiée deux fois d'affilée (une panne isolée ne déclenche pas d'alerte).
+func (s Service) Confirmed() bool { return s.State == Down && s.Failures >= 2 }
+
+// State est l'état de tous les comptes et des services correspondants.
 type State struct {
-	Accounts []Status `json:"accounts"`
+	Accounts []Status  `json:"accounts"`
+	Services []Service `json:"services"`
 }
 
 type Manager struct {
@@ -87,11 +137,15 @@ type Manager struct {
 
 	// OnCheck reçoit l'état des comptes après chaque vérification (alertes d'expiration).
 	OnCheck func([]Status)
+	// OnService reçoit l'état des services après chaque vérification (alertes de panne).
+	OnService func([]Service)
 
 	run      sync.Mutex // une vérification ou une modification à la fois
 	mu       sync.Mutex
 	accounts []Account
-	results  map[string]Status // par ID de compte
+	results  map[string]Status   // par ID de compte
+	services map[string]*Service // par fournisseur
+	now      func() time.Time
 }
 
 func New(ctx context.Context, st *store.Store, log *slog.Logger) *Manager {
@@ -106,6 +160,8 @@ func New(ctx context.Context, st *store.Store, log *slog.Logger) *Manager {
 		},
 		accounts: []Account{},
 		results:  map[string]Status{},
+		services: map[string]*Service{},
+		now:      time.Now,
 	}
 	if raw := st.Get(ctx, accountsKey); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &m.accounts); err != nil {
@@ -113,10 +169,16 @@ func New(ctx context.Context, st *store.Store, log *slog.Logger) *Manager {
 			m.accounts = []Account{}
 		}
 	}
+	if raw := st.Get(ctx, servicesKey); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &m.services); err != nil || m.services == nil {
+			m.services = map[string]*Service{}
+		}
+	}
 	return m
 }
 
-// Run vérifie les comptes peu après le démarrage, puis toutes les 6 heures.
+// Run vérifie les comptes peu après le démarrage, puis toutes les 5 minutes ; une minute plus tard
+// après un premier échec, pour confirmer vite une panne.
 func (m *Manager) Run(ctx context.Context) {
 	t := time.NewTimer(time.Minute)
 	defer t.Stop()
@@ -126,8 +188,13 @@ func (m *Manager) Run(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		m.Check(ctx)
-		t.Reset(interval)
+		next := interval
+		for _, s := range m.Check(ctx).Services {
+			if s.State == Down && s.Failures == 1 {
+				next = confirmAfter
+			}
+		}
+		t.Reset(next)
 	}
 }
 
@@ -145,7 +212,35 @@ func (m *Manager) State() State {
 		}
 		out.Accounts = append(out.Accounts, s)
 	}
+	out.Services = make([]Service, 0, len(m.services))
+	for _, p := range []string{RealDebrid, AllDebrid, TorBox, Premiumize} {
+		if svc, ok := m.services[p]; ok {
+			out.Services = append(out.Services, svc.snapshot(now))
+		}
+	}
 	return out
+}
+
+// snapshot copie l'état du service, avec son nom et sa disponibilité sur 24 h.
+func (s *Service) snapshot(now time.Time) Service {
+	cp := *s
+	cp.Name = providers[s.Provider]
+	cp.History = append([]Point{}, s.History...)
+	cp.Incidents = append([]Incident{}, s.Incidents...)
+	cp.Uptime = -1
+	n, ok := 0, 0
+	for _, p := range s.History {
+		if now.Sub(time.UnixMilli(p.TS)) <= historySpan {
+			n++
+			if p.State != Down {
+				ok++
+			}
+		}
+	}
+	if n > 0 {
+		cp.Uptime = float64(ok) * 100 / float64(n)
+	}
+	return cp
 }
 
 // Update remplace la liste des comptes puis les vérifie.
@@ -240,12 +335,112 @@ func (m *Manager) Check(ctx context.Context) State {
 	for _, r := range results {
 		m.results[r.ID] = r
 	}
+	changed := m.observe(accounts, results)
+	raw, _ := json.Marshal(m.services)
 	m.mu.Unlock()
+	if err := m.st.Set(context.WithoutCancel(ctx), servicesKey, string(raw)); err != nil {
+		m.log.Warn("état des services debrid", "erreur", err)
+	}
+	for _, s := range changed {
+		m.log.Info("service debrid", "service", providers[s.Provider], "état", s.State, "détail", s.Detail)
+	}
 	st := m.State()
 	if m.OnCheck != nil {
 		m.OnCheck(st.Accounts)
 	}
+	if m.OnService != nil {
+		m.OnService(st.Services)
+	}
 	return st
+}
+
+// observe met à jour l'état de chaque fournisseur à partir des vérifications de ses comptes : en ligne
+// si l'un d'eux a répondu (même pour refuser une clé), en panne si aucun n'a pu le joindre.
+// Renvoie les services dont l'état a changé. Appelé sous m.mu.
+func (m *Manager) observe(accounts []Account, results []Status) []Service {
+	now := m.now()
+	probes := map[string][]Status{}
+	for i, a := range accounts {
+		probes[a.Provider] = append(probes[a.Provider], results[i])
+	}
+	for p := range m.services {
+		if _, ok := probes[p]; !ok {
+			delete(m.services, p) // plus aucun compte chez ce fournisseur
+		}
+	}
+	var changed []Service
+	for p, list := range probes {
+		state, detail, latency := summarize(list)
+		svc, ok := m.services[p]
+		if !ok {
+			svc = &Service{Provider: p, Since: now.UnixMilli()}
+			m.services[p] = svc
+		}
+		if svc.State != state {
+			if state == Down {
+				svc.Incidents = append(svc.Incidents, Incident{Start: now.UnixMilli(), Cause: detail})
+			} else if svc.State == Down && len(svc.Incidents) > 0 {
+				svc.Incidents[len(svc.Incidents)-1].End = now.UnixMilli()
+			}
+			if svc.State != "" {
+				svc.Since = now.UnixMilli()
+			}
+			svc.State = state
+			changed = append(changed, *svc)
+		}
+		if state == Down {
+			svc.Failures++
+		} else {
+			svc.Failures = 0
+		}
+		svc.Detail, svc.LatencyMS, svc.CheckedAt = detail, latency.Milliseconds(), now.UnixMilli()
+		svc.History = append(svc.History, Point{TS: now.UnixMilli(), State: state, LatencyMS: latency.Milliseconds()})
+		for len(svc.History) > 0 && now.Sub(time.UnixMilli(svc.History[0].TS)) > historySpan {
+			svc.History = svc.History[1:]
+		}
+		kept := svc.Incidents[:0]
+		for _, in := range svc.Incidents {
+			if in.End == 0 || now.Sub(time.UnixMilli(in.End)) <= incidentSpan {
+				kept = append(kept, in)
+			}
+		}
+		svc.Incidents = kept[max(0, len(kept)-maxIncidents):]
+	}
+	return changed
+}
+
+// summarize déduit l'état d'un fournisseur des vérifications de ses comptes.
+func summarize(list []Status) (state, detail string, latency time.Duration) {
+	var best, degraded, down *Status
+	for i := range list {
+		s := &list[i]
+		switch s.service {
+		case Up:
+			if best == nil || s.latency < best.latency {
+				best = s
+			}
+		case Degraded:
+			degraded = cmpLatency(degraded, s)
+		default:
+			down = cmpLatency(down, s)
+		}
+	}
+	switch {
+	case best != nil && best.latency > slowAfter:
+		return Degraded, fmt.Sprintf("réponse lente (%.1f s)", best.latency.Seconds()), best.latency
+	case best != nil:
+		return Up, "", best.latency
+	case degraded != nil:
+		return Degraded, degraded.Error, degraded.latency
+	}
+	return Down, down.Error, down.latency
+}
+
+func cmpLatency(cur, s *Status) *Status {
+	if cur == nil || s.latency < cur.latency {
+		return s
+	}
+	return cur
 }
 
 // info est ce qu'un fournisseur dit du compte.
@@ -255,10 +450,12 @@ type info struct {
 	expires  time.Time // zéro si inconnue
 }
 
-// checkError est une erreur de vérification lisible, sans la clé ; refused : clé refusée par le fournisseur.
+// checkError est une erreur de vérification lisible, sans la clé ; refused : clé refusée par le fournisseur,
+// down : service injoignable ou en erreur (réseau, délai dépassé, code 5xx).
 type checkError struct {
 	msg     string
 	refused bool
+	down    bool
 }
 
 func (e *checkError) Error() string { return e.msg }
@@ -270,6 +467,7 @@ func (m *Manager) check(ctx context.Context, a Account) Status {
 	defer cancel()
 	var in info
 	var err error
+	start := time.Now()
 	switch a.Provider {
 	case RealDebrid:
 		in, err = m.realDebrid(ctx, a.Key)
@@ -281,12 +479,19 @@ func (m *Manager) check(ctx context.Context, a Account) Status {
 		in, err = m.premiumize(ctx, a.Key)
 	}
 	now := time.Now()
-	s := Status{ID: a.ID, CheckedAt: now.UnixMilli()}
+	s := Status{ID: a.ID, CheckedAt: now.UnixMilli(), service: Up, latency: now.Sub(start)}
 	if err != nil {
 		var ce *checkError
-		s.Refused = errors.As(err, &ce) && ce.refused
+		isCheck := errors.As(err, &ce)
+		s.Refused = isCheck && ce.refused
 		s.Error = err.Error()
-		m.log.Info("compte debrid", "compte", a.Label, "erreur", s.Error)
+		switch {
+		case !isCheck || ce.down:
+			s.service = Down
+		case !ce.refused:
+			s.service = Degraded // limite de requêtes, réponse inattendue
+		}
+		m.log.Debug("compte debrid", "compte", a.Label, "erreur", s.Error)
 		return s
 	}
 	s.OK, s.Username = true, in.username

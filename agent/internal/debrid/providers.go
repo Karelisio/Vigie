@@ -28,7 +28,7 @@ func (m *Manager) get(ctx context.Context, u, bearer string, out any) (int, erro
 	req.Header.Set("User-Agent", "Vigie (+https://github.com/Karelisio/Vigie)")
 	resp, err := m.http.Do(req)
 	if err != nil {
-		return 0, &checkError{msg: secret.Describe(err)}
+		return 0, &checkError{msg: secret.Describe(err), down: true}
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -46,7 +46,7 @@ func statusError(status int) error {
 	case status == http.StatusTooManyRequests:
 		return &checkError{msg: "trop de requêtes, nouvel essai plus tard"}
 	case status >= 500:
-		return &checkError{msg: fmt.Sprintf("service indisponible (code %d)", status)}
+		return &checkError{msg: fmt.Sprintf("service indisponible (code %d)", status), down: true}
 	}
 	return &checkError{msg: fmt.Sprintf("réponse inattendue (code %d)", status)}
 }

@@ -145,3 +145,38 @@ func TestChannelsFollowPush(t *testing.T) {
 		t.Fatalf("pendant la maintenance, seul le bilan doit partir : %q", title)
 	}
 }
+
+func TestDebridServiceDown(t *testing.T) {
+	e, st := newEngine(t)
+	start := time.Now().Add(-12 * time.Minute)
+	svc := debrid.Service{Provider: debrid.RealDebrid, Name: "Real-Debrid", State: debrid.Down, Failures: 1, Detail: "délai dépassé",
+		Incidents: []debrid.Incident{{Start: start.UnixMilli(), Cause: "délai dépassé"}}}
+	e.OnDebridServices([]debrid.Service{svc}) // panne isolée : rien
+	svc.Failures = 2
+	e.OnDebridServices([]debrid.Service{svc})
+	e.OnDebridServices([]debrid.Service{svc}) // déjà signalée
+	svc.State, svc.Failures = debrid.Up, 0
+	svc.Incidents[0].End = start.Add(12 * time.Minute).UnixMilli()
+	e.OnDebridServices([]debrid.Service{svc})
+	e.OnDebridServices([]debrid.Service{svc})
+	got := alertTitles(t, st)
+	if len(got) != 2 || got[0] != "critical Real-Debrid ne répond plus" || got[1] != "info Real-Debrid répond de nouveau" {
+		t.Fatalf("alertes : %q", got)
+	}
+	list, _ := st.Alerts(context.Background(), 5)
+	if list[0].Body != "Panne de 12 min." || list[1].Body != "délai dépassé. Les addons qui l'utilisent ne trouvent plus de liens." {
+		t.Fatalf("textes : %q / %q", list[0].Body, list[1].Body)
+	}
+
+	// Réglage coupé : aucune alerte.
+	s := e.set.Get()
+	s.DebridDownAlert = false
+	if _, err := e.set.Update(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	svc.State, svc.Failures = debrid.Down, 3
+	e.OnDebridServices([]debrid.Service{svc})
+	if n := len(alertTitles(t, st)); n != 2 {
+		t.Fatalf("alerte malgré le réglage : %d", n)
+	}
+}

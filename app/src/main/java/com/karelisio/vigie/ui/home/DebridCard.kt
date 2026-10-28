@@ -39,10 +39,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.karelisio.vigie.data.DebridAccount
+import com.karelisio.vigie.data.DebridService
 import com.karelisio.vigie.data.DebridState
 import com.karelisio.vigie.data.Fmt
 import com.karelisio.vigie.ui.components.Springs
 import com.karelisio.vigie.ui.components.SectionCard
+import com.karelisio.vigie.ui.components.StatusDot
 import com.karelisio.vigie.ui.components.rememberNow
 import com.karelisio.vigie.ui.theme.Vigie
 import com.karelisio.vigie.ui.theme.numeric
@@ -86,8 +88,30 @@ fun DebridCard(state: DebridState, onOpen: () -> Unit, modifier: Modifier = Modi
         },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            if (state.services.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { state.services.forEach { ServiceLine(it, now) } }
+            }
             state.accounts.forEach { DebridRow(it, now) }
         }
+    }
+}
+
+/** État d'un service debrid : pastille colorée, nom et résumé (en ligne, ralenti, en panne depuis…). */
+@Composable
+internal fun ServiceLine(service: DebridService, now: Long, modifier: Modifier = Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        StatusDot(service.tone, size = 8.dp, breathe = service.state == "down")
+        Spacer(Modifier.width(10.dp))
+        Text(service.name, style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            service.summary(now),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (service.tone == "ok") MaterialTheme.colorScheme.onSurfaceVariant else Vigie.status.of(service.tone),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 

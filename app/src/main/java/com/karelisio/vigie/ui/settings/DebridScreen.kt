@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -44,6 +46,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +54,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,22 +62,29 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.karelisio.vigie.appContainer
+import com.karelisio.vigie.data.AgentSettings
 import com.karelisio.vigie.data.ApiException
 import com.karelisio.vigie.data.DebridAccount
 import com.karelisio.vigie.data.DebridAccountInput
 import com.karelisio.vigie.data.DebridProviders
+import com.karelisio.vigie.data.DebridService
 import com.karelisio.vigie.data.DebridState
+import com.karelisio.vigie.data.Fmt
 import com.karelisio.vigie.data.checkDebrid
 import com.karelisio.vigie.data.debrid
 import com.karelisio.vigie.data.debridState
 import com.karelisio.vigie.data.saveDebridAccounts
 import com.karelisio.vigie.data.versionAtLeast
 import com.karelisio.vigie.ui.components.EmptyState
+import com.karelisio.vigie.ui.components.SectionTitle
+import com.karelisio.vigie.ui.components.UptimeBars
 import com.karelisio.vigie.ui.components.cascade
 import com.karelisio.vigie.ui.components.rememberHaptics
 import com.karelisio.vigie.ui.components.rememberNow
 import com.karelisio.vigie.ui.home.DebridRow
+import com.karelisio.vigie.ui.home.ServiceLine
 import com.karelisio.vigie.ui.navigation.LocalSnackbar
+import com.karelisio.vigie.ui.theme.Vigie
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
@@ -125,6 +136,61 @@ class DebridViewModel : ViewModel() {
         busy = true
         return runCatching { repo.checkDebrid() }.also { busy = false }
     }
+
+    /** Réglages de l'agent, pour l'alerte de panne d'un service (agent 0.6 et plus). */
+    private val _settings = MutableStateFlow<AgentSettings?>(null)
+    val settings = _settings.asStateFlow()
+
+    fun loadSettings() {
+        viewModelScope.launch { runCatching { repo.settings() }.onSuccess { _settings.value = it } }
+    }
+
+    suspend fun setDownAlert(on: Boolean): Result<AgentSettings> {
+        val current = _settings.value ?: return Result.failure(IllegalStateException("réglages indisponibles"))
+        _settings.value = current.copy(debridDownAlert = on)
+        return runCatching { repo.saveSettings(current.copy(debridDownAlert = on)) }
+            .onSuccess { _settings.value = it }
+            .onFailure { _settings.value = current }
+    }
+}
+
+/** État d'un service : pastille et résumé, disponibilité sur 24 h et dernières pannes. */
+@Composable
+private fun ServiceCard(service: DebridService, now: Long, modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(shape = RoundedCornerShape(24.dp), color = scheme.surfaceContainer, modifier = modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            ServiceLine(service, now)
+            if (service.history.isNotEmpty()) {
+                UptimeBars(service.buckets(now), height = 24.dp)
+                Row {
+                    Text("24 h", style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    if (service.uptime >= 0) {
+                        Text(
+                            "${Fmt.uptimePct(service.uptime)} disponible",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = scheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            service.incidents.takeLast(3).reversed().forEach { inc ->
+                val end = inc.end.takeIf { it > 0 }
+                val length = Fmt.duration(((end ?: now) - inc.start) / 1000)
+                Text(
+                    buildString {
+                        append(Fmt.dateTime(inc.start))
+                        append(if (end == null) " · en cours depuis $length" else " · panne de $length")
+                        if (inc.cause.isNotEmpty()) append(" · ").append(inc.cause)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (end == null) Vigie.status.critical else scheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
 }
 
 /** Comptes debrid : ajout, modification, suppression et vérification immédiate. */
@@ -143,6 +209,9 @@ fun DebridScreen(nav: NavHostController, vm: DebridViewModel = viewModel()) {
     val haptics = rememberHaptics()
     val now = rememberNow(60_000)
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 32.dp
+    LaunchedEffect(live.agentVersion, live.readOnly) {
+        if (!live.readOnly && versionAtLeast(live.agentVersion, 0, 6)) vm.loadSettings()
+    }
 
     fun checkNow() {
         haptics.tick()
@@ -169,9 +238,15 @@ fun DebridScreen(nav: NavHostController, vm: DebridViewModel = viewModel()) {
             }
         }
         item {
+            val v06 = versionAtLeast(live.agentVersion, 0, 6)
             Text(
-                "Vigie vérifie tes comptes toutes les 6 heures et te prévient 7 jours puis 1 jour avant la fin du premium, " +
-                    "ou si une clé est refusée. Les clés restent sur l'agent.",
+                if (v06) {
+                    "Vigie vérifie tes comptes toutes les 5 minutes : il te prévient si le service ne répond plus, " +
+                        "7 jours puis 1 jour avant la fin du premium, ou si une clé est refusée. Les clés restent sur l'agent."
+                } else {
+                    "Vigie vérifie tes comptes toutes les 6 heures et te prévient 7 jours puis 1 jour avant la fin du premium, " +
+                        "ou si une clé est refusée. Les clés restent sur l'agent."
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 4.dp),
@@ -203,6 +278,30 @@ fun DebridScreen(nav: NavHostController, vm: DebridViewModel = viewModel()) {
                 }
             }
             else -> {
+                if (s.services.isNotEmpty()) {
+                    item { SectionTitle("État des services") }
+                    items(s.services, key = { "svc-" + it.provider }) { svc ->
+                        ServiceCard(svc, now, Modifier.animateItem())
+                    }
+                    if (!live.readOnly && versionAtLeast(live.agentVersion, 0, 6)) {
+                        item {
+                            val settings by vm.settings.collectAsStateWithLifecycle()
+                            settings?.let { set ->
+                                ToggleRow(
+                                    Icons.Rounded.NotificationsActive, "Alerte de panne",
+                                    "Prévenu quand un service ne répond plus, puis quand il revient",
+                                    set.debridDownAlert,
+                                ) { on ->
+                                    haptics.toggle(on)
+                                    scope.launch {
+                                        vm.setDownAlert(on).onFailure { snackbar.showSnackbar("Échec : ${it.message}") }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item { SectionTitle("Comptes") }
+                }
                 itemsIndexed(s.accounts, key = { _, a -> a.id }) { i, a ->
                     Surface(
                         onClick = { haptics.tick(); editing = a },

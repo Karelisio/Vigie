@@ -166,9 +166,10 @@ func run(log *slog.Logger) error {
 		}
 	}
 
-	// Comptes debrid : vérifiés toutes les 6 h, alertes d'expiration via le moteur.
+	// Comptes debrid : vérifiés toutes les 5 min (état des services), alertes d'expiration et de panne.
 	dm := debrid.New(ctx, st, log)
 	dm.OnCheck = eng.OnDebrid
+	dm.OnService = eng.OnDebridServices
 
 	apiSrv := api.New(cfg, mon, dk, st, runner, eng, upd, log, version)
 	apiSrv.LogWatch = lw

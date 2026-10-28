@@ -268,3 +268,117 @@ func TestNetworkErrorHidesKey(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceStatus(t *testing.T) {
+	f := newFakeProviders(t)
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := newManager(t, st, f)
+	clock := time.Now()
+	m.now = func() time.Time { return clock }
+	var seen [][]Service
+	m.OnService = func(list []Service) { seen = append(seen, list) }
+	ctx := context.Background()
+
+	// Real-Debrid : un compte joignable suffit (clé refusée comprise) ; TorBox : seul compte en 502.
+	state, err := m.Update(ctx, []Account{
+		{Provider: RealDebrid, Key: keyBad}, {Provider: RealDebrid, Label: "Autre", Key: keyDown}, {Provider: TorBox, Key: keyDown},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := func(s State, p string) Service {
+		for _, x := range s.Services {
+			if x.Provider == p {
+				return x
+			}
+		}
+		t.Fatalf("service %s absent : %+v", p, s.Services)
+		return Service{}
+	}
+	rd, tb := svc(state, RealDebrid), svc(state, TorBox)
+	if rd.State != Up || rd.Name != "Real-Debrid" || rd.Uptime != 100 || len(rd.Incidents) != 0 {
+		t.Fatalf("Real-Debrid : %+v", rd)
+	}
+	if tb.State != Down || tb.Failures != 1 || tb.Confirmed() || tb.Detail != "service indisponible (code 502)" || len(tb.Incidents) != 1 || tb.Uptime != 0 {
+		t.Fatalf("TorBox : %+v", tb)
+	}
+	if len(seen) != 1 || len(seen[0]) != 2 || seen[0][0].Provider != RealDebrid {
+		t.Fatalf("rappel des services : %+v", seen)
+	}
+
+	// Deuxième échec : panne confirmée, toujours un seul incident.
+	clock = clock.Add(time.Minute)
+	tb = svc(m.Check(ctx), TorBox)
+	if !tb.Confirmed() || len(tb.Incidents) != 1 || tb.Incidents[0].End != 0 || len(tb.History) != 2 {
+		t.Fatalf("panne confirmée : %+v", tb)
+	}
+
+	// Retour à la normale (nouvelle clé) : incident clos, état relu après redémarrage.
+	clock = clock.Add(4 * time.Minute)
+	cur := m.State().Accounts
+	state, err = m.Update(ctx, []Account{
+		{ID: cur[0].ID, Provider: RealDebrid, Key: cur[0].Key}, {ID: cur[2].ID, Provider: TorBox, Key: keyGood},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb = svc(state, TorBox)
+	if tb.State != Up || tb.Failures != 0 || tb.Incidents[0].End != clock.UnixMilli() || tb.Since != clock.UnixMilli() {
+		t.Fatalf("rétabli : %+v", tb)
+	}
+	if tb.Uptime < 33 || tb.Uptime > 34 {
+		t.Fatalf("disponibilité sur 24 h : %v", tb.Uptime)
+	}
+	again := newManager(t, st, f)
+	if s := again.State().Services; len(s) != 2 || s[1].Provider != TorBox || len(s[1].History) != 3 || len(s[1].Incidents) != 1 {
+		t.Fatalf("services relus : %+v", s)
+	}
+
+	// Historique limité à 24 h ; un fournisseur sans compte disparaît.
+	clock = clock.Add(25 * time.Hour)
+	state, err = m.Update(ctx, []Account{{ID: cur[2].ID, Provider: TorBox, Key: keyGood}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Services) != 1 || len(state.Services[0].History) != 1 || len(state.Services[0].Incidents) != 1 {
+		t.Fatalf("après 25 h : %+v", state.Services)
+	}
+}
+
+func TestSummarize(t *testing.T) {
+	st := func(service string, ms int, msg string) Status {
+		return Status{service: service, latency: time.Duration(ms) * time.Millisecond, Error: msg}
+	}
+	cases := []struct {
+		in     []Status
+		state  string
+		detail string
+	}{
+		{[]Status{st(Up, 300, ""), st(Down, 15000, "délai dépassé")}, Up, ""},
+		{[]Status{st(Up, 6200, "")}, Degraded, "réponse lente (6.2 s)"},
+		{[]Status{st(Degraded, 200, "trop de requêtes, nouvel essai plus tard"), st(Down, 100, "x")}, Degraded, "trop de requêtes, nouvel essai plus tard"},
+		{[]Status{st(Down, 900, "b"), st(Down, 100, "a")}, Down, "a"},
+	}
+	for i, c := range cases {
+		if state, detail, _ := summarize(c.in); state != c.state || detail != c.detail {
+			t.Errorf("cas %d : %s %q", i, state, detail)
+		}
+	}
+}
+
+func TestUnreachableIsDown(t *testing.T) {
+	f := newFakeProviders(t)
+	m := newManager(t, nil, f)
+	m.bases[Premiumize] = "http://127.0.0.1:1"
+	state, err := m.Update(context.Background(), []Account{{Provider: Premiumize, Key: keyGood}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := state.Services; len(s) != 1 || s[0].State != Down || strings.Contains(s[0].Detail, keyGood) {
+		t.Fatalf("service injoignable : %+v", s)
+	}
+}

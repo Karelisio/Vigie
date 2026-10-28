@@ -40,8 +40,69 @@ data class DebridAccount(
     val title: String get() = if (label.isEmpty() || label == providerName) providerName else "$providerName · $label"
 }
 
+/** Vérification d'un service debrid : état (`up`, `degraded`, `down`) et latence. */
 @Serializable
-data class DebridState(val accounts: List<DebridAccount> = emptyList())
+data class DebridPoint(val ts: Long = 0, @SerialName("s") val state: String = "", @SerialName("ms") val latencyMs: Long = 0)
+
+/** Panne d'un service debrid ; [end] à 0 : en cours. */
+@Serializable
+data class DebridIncident(val start: Long = 0, val end: Long = 0, val cause: String = "")
+
+/** État d'un fournisseur debrid, déduit des vérifications de ses comptes (agent 0.6 et plus). */
+@Serializable
+data class DebridService(
+    val provider: String = "",
+    val name: String = "",
+    /** `up`, `degraded` ou `down`. */
+    val state: String = "",
+    val detail: String = "",
+    @SerialName("latency_ms") val latencyMs: Long = 0,
+    /** Début de l'état actuel (ms). */
+    val since: Long = 0,
+    @SerialName("checked_at") val checkedAt: Long = 0,
+    /** Vérifications en panne d'affilée : à partir de 2, la panne est confirmée. */
+    val failures: Int = 0,
+    /** Disponibilité sur 24 h en %, -1 sans données. */
+    @SerialName("uptime_24h") val uptime: Double = -1.0,
+    val history: List<DebridPoint> = emptyList(),
+    val incidents: List<DebridIncident> = emptyList(),
+) {
+    /** Ton de l'état pour les couleurs : ok, warning ou critical. */
+    val tone: String get() = when (state) {
+        "up" -> "ok"
+        "degraded" -> "warning"
+        "down" -> "critical"
+        else -> "neutral"
+    }
+
+    /** Résumé court : « En ligne · 230 ms », « Ralenti : … », « En panne depuis 14:05 ». */
+    fun summary(now: Long = System.currentTimeMillis()): String = when (state) {
+        "up" -> "En ligne · $latencyMs ms"
+        "degraded" -> "Ralenti" + detail.takeIf { it.isNotEmpty() }?.let { " : $it" }.orEmpty()
+        "down" -> "En panne depuis " + if (now - since < 20 * 3_600_000L) Fmt.time(since) else Fmt.dateTime(since)
+        else -> "En attente de vérification"
+    }
+
+    /** Historique de 24 h regroupé en [count] barres (une panne compte comme un échec). */
+    fun buckets(now: Long, count: Int = 48): List<UptimeBucket> {
+        val span = 24 * 3_600_000L
+        val start = now - span
+        val step = span / count
+        val totals = IntArray(count)
+        val oks = IntArray(count)
+        history.forEach { p ->
+            if (p.ts in start..now) {
+                val i = ((p.ts - start) / step).toInt().coerceIn(0, count - 1)
+                totals[i]++
+                if (p.state != "down") oks[i]++
+            }
+        }
+        return List(count) { UptimeBucket(ts = start + it * step, total = totals[it], ok = oks[it]) }
+    }
+}
+
+@Serializable
+data class DebridState(val accounts: List<DebridAccount> = emptyList(), val services: List<DebridService> = emptyList())
 
 /** Compte envoyé à l'agent : sans [id], nouveau compte ; clé vide ou masquée, clé actuelle conservée. */
 @Serializable
