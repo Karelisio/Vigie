@@ -21,7 +21,18 @@ func fakeStremio(t *testing.T) *httptest.Server {
 		"/ok/stream/series/tt0903747:1:1.json":     `{"streams":[{"url":"https://cdn.example/e.mkv"}]}`,
 		"/obj/manifest.json":                       `{"resources":[{"name":"stream","types":["movie"],"idPrefixes":["tt"]}]}`,
 		"/obj/stream/movie/tt0111161.json":         `{"streams":[]}`,
-		"/meta/manifest.json":                      `{"resources":["catalog","meta"]}`,
+		"/meta/manifest.json":                      `{"resources":["catalog","meta"],"types":["movie","series"],"idPrefixes":["tt","tmdb:"]}`,
+		"/meta/meta/movie/tt0111161.json":          `{"meta":{"id":"tt0111161","name":"Les Évadés"}}`,
+		"/meta/meta/series/tt0903747.json":         `{"meta":null}`,
+		"/cat/manifest.json":                       `{"resources":["catalog"],"catalogs":[{"type":"movie","id":"search","extra":[{"name":"search","isRequired":true}]},{"type":"movie","id":"top","name":"Populaires"}]}`,
+		"/cat/catalog/movie/top.json":              `{"metas":[{"id":"tt1"}]}`,
+		"/empty/manifest.json":                     `{"resources":["catalog"],"catalogs":[{"type":"movie","id":"top","name":"Populaires"}]}`,
+		"/empty/catalog/movie/top.json":            `{"metas":[]}`,
+		"/subs/manifest.json":                      `{"resources":["subtitles"]}`,
+		"/anime/manifest.json":                     `{"resources":[{"name":"stream","types":["anime"],"idPrefixes":["kitsu:"]}]}`,
+		"/unconf/manifest.json":                    `{"resources":[],"behaviorHints":{"configurable":true,"configurationRequired":true}}`,
+		"/err/manifest.json":                       `{"resources":["stream"]}`,
+		"/err/stream/movie/tt0111161.json":         `{"streams":[{"name":"[❌] AIOStreams","description":"Clé Real-Debrid\ninvalide"}]}`,
 		"/broken/manifest.json":                    `{"resources":["stream"]}`,
 		"/broken/stream/movie/tt0111161.json":      `{"streams":[`,
 		"/cfg/abc%2Fdef/manifest.json":             `{"resources":["stream"]}`,
@@ -64,9 +75,16 @@ func TestStremioProbe(t *testing.T) {
 		{"/cfg/abc%2Fdef/manifest.json", "tt1", 1, ""},
 		{"/obj/manifest.json", "tt0111161", 0, "aucun lien pour tt0111161"},
 		{"/series-only/manifest.json", "tt0111161", 0, "aucun lien pour tt0111161"},
-		{"/meta/manifest.json", "tt0111161", 0, "manifest sans ressource « stream »"},
+		{"/meta/manifest.json", "tt0111161", 0, ""},
+		{"/meta/manifest.json", "tt0903747:1:1", 0, "aucune fiche pour tt0903747"},
+		{"/cat/manifest.json", "tt0111161", 0, ""},
+		{"/empty/manifest.json", "tt0111161", 0, "catalogue « Populaires » vide"},
+		{"/subs/manifest.json", "tt0111161", 0, ""},
+		{"/anime/manifest.json", "tt0111161", 0, ""},
+		{"/unconf/manifest.json", "tt0111161", 0, "addon non configuré : utilise l'URL du manifest installée dans Stremio (avec ta configuration)"},
+		{"/err/manifest.json", "tt0111161", 0, "aucun lien pour tt0111161 (l'addon indique : « Clé Real-Debrid invalide »)"},
 		{"/broken/manifest.json", "tt0111161", 0, "réponse JSON invalide (liens)"},
-		{"/html/manifest.json", "tt0111161", 0, "réponse JSON invalide (manifest) : page HTML « Connexion »"},
+		{"/html/manifest.json", "tt0111161", 0, "ce n'est pas le manifest de l'addon (page HTML « Connexion ») : vérifie l'URL, celle installée dans Stremio"},
 		{"/absent/manifest.json", "tt0111161", 0, "manifest : code 404"},
 	}
 	for _, c := range cases {
@@ -75,7 +93,7 @@ func TestStremioProbe(t *testing.T) {
 			t.Fatalf("%s : %v", c.path, err)
 		}
 		res := r.probe(context.Background(), check)
-		if res.Links != c.links || res.Error != c.err || res.OK != (c.err == "") {
+		if res.Links != c.links || res.Error != c.err || res.OK != (c.err == "") || res.Probe == "" && c.err == "" {
 			t.Errorf("%s %s : liens %d, erreur %q, ok %v ; attendu %d, %q", c.path, c.id, res.Links, res.Error, res.OK, c.links, c.err)
 		}
 	}
@@ -100,7 +118,7 @@ func TestValidateStremio(t *testing.T) {
 	if c.StremioID != DefaultStremioID || c.IntervalSec != 300 || c.TimeoutMS != 30000 {
 		t.Fatalf("normalisation inattendue : %+v", c)
 	}
-	if streamURL(c.URL+"?x=1", "tt0903747:1:1") != "https://comet.example.com/cfg/stream/series/tt0903747:1:1.json" {
+	if addonURL(c.URL+"?x=1", "stream", "series", "tt0903747:1:1") != "https://comet.example.com/cfg/stream/series/tt0903747:1:1.json" {
 		t.Error("URL de recherche de liens")
 	}
 	bad := []store.Check{

@@ -386,7 +386,7 @@ internal fun CheckCard(
                     }
                     Text(c.url, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                     val expects = if (c.isStremio) {
-                        "Contenu de test ${c.stremioId}" + (c.last?.let { " · dernier essai : ${linksLabel(it.links)}" } ?: "")
+                        "Contenu de test ${c.stremioId}" + (c.last?.let { " · dernier essai : ${probeLabel(it)}" } ?: "")
                     } else {
                         "Code attendu ${c.expectedStatus}" + (if (c.keyword.isNotEmpty()) " · contient « ${c.keyword} »" else "")
                     }
@@ -413,10 +413,16 @@ internal fun CheckCard(
     }
 }
 
-private fun linksLabel(n: Int) = when (n) {
-    0 -> "aucun lien"
-    1 -> "1 lien"
-    else -> "$n liens"
+/** Ce que le dernier test Stremio a vérifié (liens d'un addon de streaming, fiche d'un addon de métadonnées…). */
+private fun probeLabel(r: com.karelisio.vigie.data.CheckResult) = when (r.probe) {
+    "meta" -> if (r.ok) "fiche trouvée" else "fiche introuvable"
+    "catalog" -> if (r.ok) "catalogue disponible" else "catalogue indisponible"
+    "manifest" -> "manifest valide"
+    else -> when (r.links) {
+        0 -> "aucun lien"
+        1 -> "1 lien"
+        else -> "${r.links} liens"
+    }
 }
 
 /** Validité du certificat HTTPS : alerte visuelle sous 14 jours. */

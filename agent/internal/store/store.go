@@ -81,6 +81,7 @@ var migrations = []string{
 	`ALTER TABLE checks ADD COLUMN kind TEXT NOT NULL DEFAULT 'http'`,
 	`ALTER TABLE checks ADD COLUMN stremio_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE check_results ADD COLUMN links INTEGER`,
+	`ALTER TABLE check_results ADD COLUMN probe TEXT`,
 }
 
 func Open(dir string) (*Store, error) {

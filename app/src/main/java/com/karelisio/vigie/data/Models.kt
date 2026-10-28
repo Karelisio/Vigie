@@ -122,6 +122,8 @@ data class CheckResult(
     @SerialName("cert_expires") val certExpires: Long = 0,
     /** Liens renvoyés par l'addon (check Stremio, agent 0.4 et plus). */
     val links: Int = 0,
+    /** Test Stremio effectué : stream, meta, catalog ou manifest (agent 0.5 et plus). */
+    val probe: String = "",
 )
 
 @Serializable

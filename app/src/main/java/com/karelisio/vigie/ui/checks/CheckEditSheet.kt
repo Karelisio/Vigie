@@ -50,13 +50,16 @@ import com.karelisio.vigie.ui.components.rememberHaptics
 import com.karelisio.vigie.ui.theme.Vigie
 import kotlinx.coroutines.launch
 
-/** [stremio] : addon testé par une vraie recherche de liens (agent 0.4 et plus), sinon simple page web. */
+/**
+ * [stremio] : addon testé comme dans Stremio (agent 0.4 et plus), sinon simple page web. AIOStreams et
+ * AIOMetadata exigent l'URL personnelle (avec la configuration) : le préréglage teste donc la page publique.
+ */
 private data class Preset(val name: String, val sub: String, val path: String, val keyword: String = "\"id\"", val stremio: Boolean = false)
 
 private val Presets = listOf(
-    Preset("AIOStreams", "aiostreams", "/stremio/manifest.json", stremio = true),
+    Preset("AIOStreams", "aiostreams", "/stremio/manifest.json"),
     Preset("Comet", "comet", "/manifest.json", stremio = true),
-    Preset("AIOMetadata", "aiometadata", "/manifest.json"),
+    Preset("AIOMetadata", "aiometadata", "/", keyword = ""),
 )
 
 private const val DEFAULT_STREMIO_ID = "tt0111161"
@@ -146,7 +149,10 @@ fun CheckEditSheet(
                 label = { Text("URL") },
                 supportingText = {
                     Text(
-                        if (stremio) "Le manifest configuré, celui installé dans Stremio (…/manifest.json)."
+                        if (stremio) {
+                            "L'URL installée dans Stremio, avec ta configuration (…/manifest.json). " +
+                                "Addon de liens : recherche de liens ; addon de métadonnées : fiche du film ; sinon un catalogue."
+                        }
                         else "Par ex. le manifest.json de l'addon. Une URL interne (http://conteneur:port) fonctionne aussi.",
                     )
                 },

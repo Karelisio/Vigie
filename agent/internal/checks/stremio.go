@@ -1,6 +1,7 @@
 package checks
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,27 +49,24 @@ func validateStremio(c *store.Check, u *url.URL) error {
 	return nil
 }
 
-// streamURL déduit de l'adresse du manifest celle de la recherche de liens pour un contenu.
-func streamURL(manifest, id string) string {
+// addonURL déduit de l'adresse du manifest celle d'une ressource : <base>/<ressource>/<type>/<id>.json.
+func addonURL(manifest, resource, kind, id string) string {
 	base := manifest
 	if i := strings.IndexAny(base, "?#"); i >= 0 {
 		base = base[:i]
 	}
-	kind := "movie"
-	if strings.Contains(id, ":") {
-		kind = "series"
-	}
-	return strings.TrimSuffix(base, "manifest.json") + "stream/" + kind + "/" + id + ".json"
+	return strings.TrimSuffix(base, "manifest.json") + resource + "/" + kind + "/" + id + ".json"
 }
 
-// probeStremio teste l'addon comme le ferait Stremio : manifest, puis liens d'un contenu connu.
-// Le code attendu et le mot-clé ne s'appliquent pas à ce mode.
+// probeStremio teste l'addon comme le ferait Stremio : manifest, puis la ressource qu'il fournit
+// (liens d'un contenu connu, sinon sa fiche, sinon un catalogue). Le code attendu et le mot-clé
+// ne s'appliquent pas à ce mode.
 func (r *Runner) probeStremio(ctx context.Context, c store.Check) store.CheckResult {
 	res := store.CheckResult{CheckID: c.ID, TS: time.Now().UnixMilli()}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.TimeoutMS)*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if err := r.stremioLinks(ctx, c, &res); err != nil {
+	if err := r.stremioProbe(ctx, c, &res); err != nil {
 		res.Error = err.Error()
 	} else {
 		res.OK = true
@@ -76,12 +75,84 @@ func (r *Runner) probeStremio(ctx context.Context, c store.Check) store.CheckRes
 	return res
 }
 
-// stremioLinks renseigne le code HTTP, le certificat et le nombre de liens trouvés.
-func (r *Runner) stremioLinks(ctx context.Context, c store.Check, res *store.CheckResult) error {
-	var manifest struct {
-		Resources []json.RawMessage `json:"resources"`
+type stremioCatalog struct {
+	Type          string   `json:"type"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	ExtraRequired []string `json:"extraRequired"`
+	Extra         []struct {
+		IsRequired bool `json:"isRequired"`
+	} `json:"extra"`
+}
+
+// browsable : un catalogue consultable sans paramètre (pas une recherche).
+func (c stremioCatalog) browsable() bool {
+	if len(c.ExtraRequired) > 0 {
+		return false
 	}
-	resp, err := r.fetchJSON(ctx, c.URL, "manifest", 2<<20, &manifest)
+	for _, e := range c.Extra {
+		if e.IsRequired {
+			return false
+		}
+	}
+	return true
+}
+
+type stremioManifest struct {
+	Types         []string          `json:"types"`
+	IDPrefixes    []string          `json:"idPrefixes"`
+	Resources     []json.RawMessage `json:"resources"`
+	Catalogs      []stremioCatalog  `json:"catalogs"`
+	BehaviorHints struct {
+		ConfigurationRequired bool `json:"configurationRequired"`
+	} `json:"behaviorHints"`
+}
+
+// stremioResource : types et préfixes d'identifiants gérés par une ressource (vides : tous).
+type stremioResource struct{ types, prefixes []string }
+
+// resources indexe les ressources par nom ; une ressource écrite en simple chaîne hérite des types
+// et préfixes du manifest.
+func (m stremioManifest) resources() map[string]stremioResource {
+	out := map[string]stremioResource{}
+	for _, raw := range m.Resources {
+		var name string
+		if json.Unmarshal(raw, &name) == nil {
+			out[name] = stremioResource{m.Types, m.IDPrefixes}
+			continue
+		}
+		var obj struct {
+			Name       string   `json:"name"`
+			Types      []string `json:"types"`
+			IDPrefixes []string `json:"idPrefixes"`
+		}
+		if json.Unmarshal(raw, &obj) == nil && obj.Name != "" {
+			res := stremioResource{obj.Types, obj.IDPrefixes}
+			if res.types == nil {
+				res.types = m.Types
+			}
+			if res.prefixes == nil {
+				res.prefixes = m.IDPrefixes
+			}
+			out[obj.Name] = res
+		}
+	}
+	return out
+}
+
+func (s stremioResource) handles(kind, id string) bool {
+	typeOK := len(s.types) == 0 || slices.Contains(s.types, kind)
+	prefixOK := len(s.prefixes) == 0
+	for _, p := range s.prefixes {
+		prefixOK = prefixOK || strings.HasPrefix(id, p)
+	}
+	return typeOK && prefixOK
+}
+
+// stremioProbe renseigne le code HTTP, le certificat, le test effectué et le nombre de liens trouvés.
+func (r *Runner) stremioProbe(ctx context.Context, c store.Check, res *store.CheckResult) error {
+	var m stremioManifest
+	resp, err := r.fetchJSON(ctx, c.URL, "manifest", 2<<20, &m)
 	if resp != nil {
 		res.Status = resp.StatusCode
 		if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
@@ -91,52 +162,111 @@ func (r *Runner) stremioLinks(ctx context.Context, c store.Check, res *store.Che
 	if err != nil {
 		return err
 	}
-	if !hasStreamResource(manifest.Resources) {
-		return errors.New("manifest sans ressource « stream »")
+	if m.BehaviorHints.ConfigurationRequired {
+		return errors.New("addon non configuré : utilise l'URL du manifest installée dans Stremio (avec ta configuration)")
 	}
+	kind, id := "movie", c.StremioID
+	if strings.Contains(id, ":") {
+		kind = "series"
+	}
+	resources := m.resources()
+	if s, ok := resources["stream"]; ok && s.handles(kind, id) {
+		res.Probe = "stream"
+		return r.stremioStreams(ctx, c, kind, id, res)
+	}
+	// Addon de métadonnées : la fiche du contenu (sans saison ni épisode).
+	metaID, _, _ := strings.Cut(id, ":")
+	if s, ok := resources["meta"]; ok && s.handles(kind, metaID) {
+		res.Probe = "meta"
+		var out struct {
+			Meta *struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"meta"`
+		}
+		if err := r.fetchResource(ctx, addonURL(c.URL, "meta", kind, metaID), "fiche", 4<<20, &out, res); err != nil {
+			return err
+		}
+		if out.Meta == nil || out.Meta.ID == "" && out.Meta.Name == "" {
+			return errors.New("aucune fiche pour " + metaID)
+		}
+		return nil
+	}
+	if _, ok := resources["catalog"]; ok {
+		for _, cat := range m.Catalogs {
+			if !cat.browsable() {
+				continue
+			}
+			res.Probe = "catalog"
+			var out struct {
+				Metas []json.RawMessage `json:"metas"`
+			}
+			if err := r.fetchResource(ctx, addonURL(c.URL, "catalog", cat.Type, cat.ID), "catalogue", 8<<20, &out, res); err != nil {
+				return err
+			}
+			if len(out.Metas) == 0 {
+				return fmt.Errorf("catalogue « %s » vide", cmp.Or(cat.Name, cat.ID))
+			}
+			return nil
+		}
+	}
+	// Ni liens, ni fiches, ni catalogue consultable : un manifest valide suffit.
+	res.Probe = "manifest"
+	return nil
+}
 
-	var streams struct {
-		Streams []struct {
-			URL      string `json:"url"`
-			InfoHash string `json:"infoHash"`
-			YtID     string `json:"ytId"`
-			NzbURL   string `json:"nzbUrl"`
-		} `json:"streams"`
-	}
-	resp, err = r.fetchJSON(ctx, streamURL(c.URL, c.StremioID), "liens", 8<<20, &streams)
+// fetchResource lit une ressource de l'addon et retient son code HTTP.
+func (r *Runner) fetchResource(ctx context.Context, u, what string, limit int64, out any, res *store.CheckResult) error {
+	resp, err := r.fetchJSON(ctx, u, what, limit, out)
 	if resp != nil {
 		res.Status = resp.StatusCode
 	}
-	if err != nil {
+	return err
+}
+
+// stremioStreams demande les liens du contenu de test.
+func (r *Runner) stremioStreams(ctx context.Context, c store.Check, kind, id string, res *store.CheckResult) error {
+	var out struct {
+		Streams []struct {
+			URL         string `json:"url"`
+			InfoHash    string `json:"infoHash"`
+			YtID        string `json:"ytId"`
+			NzbURL      string `json:"nzbUrl"`
+			Name        string `json:"name"`
+			Title       string `json:"title"`
+			Description string `json:"description"`
+		} `json:"streams"`
+	}
+	if err := r.fetchResource(ctx, addonURL(c.URL, "stream", kind, id), "liens", 8<<20, &out, res); err != nil {
 		return err
 	}
 	// Seules les entrées lisibles comptent (les addons signalent parfois leurs erreurs par une fausse entrée).
-	for _, s := range streams.Streams {
+	for _, s := range out.Streams {
 		if s.URL != "" || s.InfoHash != "" || s.YtID != "" || s.NzbURL != "" {
 			res.Links++
 		}
 	}
-	if res.Links == 0 {
-		return errors.New("aucun lien pour " + c.StremioID)
+	if res.Links > 0 {
+		return nil
 	}
-	return nil
+	msg := "aucun lien pour " + id
+	if len(out.Streams) > 0 {
+		// La fausse entrée porte en général l'explication de l'addon (debrid, configuration…).
+		s := out.Streams[0]
+		if hint := oneLine(cmp.Or(s.Description, s.Title, s.Name), 150); hint != "" {
+			msg += " (l'addon indique : « " + hint + " »)"
+		}
+	}
+	return errors.New(msg)
 }
 
-// hasStreamResource cherche « stream » parmi les ressources, écrites en chaîne ou en objet {"name": …}.
-func hasStreamResource(resources []json.RawMessage) bool {
-	for _, raw := range resources {
-		var name string
-		if json.Unmarshal(raw, &name) == nil && name == "stream" {
-			return true
-		}
-		var obj struct {
-			Name string `json:"name"`
-		}
-		if json.Unmarshal(raw, &obj) == nil && obj.Name == "stream" {
-			return true
-		}
+// oneLine réduit un texte à une seule ligne d'au plus n caractères.
+func oneLine(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > n {
+		s = string(r[:n]) + "…"
 	}
-	return false
+	return s
 }
 
 // fetchJSON lit une réponse JSON ; l'erreur est déjà formulée pour l'utilisateur.
@@ -160,8 +290,12 @@ func (r *Runner) fetchJSON(ctx context.Context, u, what string, limit int64, out
 		return resp, fmt.Errorf("%s : code %d", what, resp.StatusCode)
 	}
 	if err := json.Unmarshal(body, out); err != nil {
+		d := describeBody(resp.Header.Get("Content-Type"), body)
+		if what == "manifest" && strings.HasPrefix(d, "page HTML") {
+			return resp, errors.New("ce n'est pas le manifest de l'addon (" + d + ") : vérifie l'URL, celle installée dans Stremio")
+		}
 		msg := "réponse JSON invalide (" + what + ")"
-		if d := describeBody(resp.Header.Get("Content-Type"), body); !strings.HasPrefix(d, "JSON") {
+		if !strings.HasPrefix(d, "JSON") {
 			msg += " : " + d
 		}
 		return resp, errors.New(msg)

@@ -34,6 +34,8 @@ type CheckResult struct {
 	CertExpires int64 `json:"cert_expires,omitempty"`
 	// Nombre de liens renvoyés par l'addon (mode stremio).
 	Links int `json:"links,omitempty"`
+	// Test effectué en mode stremio : stream (liens), meta (fiche), catalog ou manifest.
+	Probe string `json:"probe,omitempty"`
 }
 
 var ErrNoRows = sql.ErrNoRows
@@ -111,8 +113,8 @@ func (s *Store) DeleteCheck(ctx context.Context, id int64) error {
 }
 
 func (s *Store) AddResult(ctx context.Context, r CheckResult) error {
-	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO check_results (check_id, ts, ok, status, latency_ms, error, cert_expires, links) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.CheckID, r.TS, r.OK, r.Status, r.LatencyMS, r.Error, r.CertExpires, r.Links)
+	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO check_results (check_id, ts, ok, status, latency_ms, error, cert_expires, links, probe) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.CheckID, r.TS, r.OK, r.Status, r.LatencyMS, r.Error, r.CertExpires, r.Links, r.Probe)
 	if err != nil {
 		return err
 	}
@@ -129,7 +131,7 @@ func (s *Store) AddResult(ctx context.Context, r CheckResult) error {
 
 // RecentResults renvoie les n derniers résultats, du plus ancien au plus récent.
 func (s *Store) RecentResults(ctx context.Context, id int64, n int) ([]CheckResult, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ts, ok, status, latency_ms, COALESCE(error, ''), COALESCE(cert_expires, 0), COALESCE(links, 0) FROM
+	rows, err := s.db.QueryContext(ctx, `SELECT ts, ok, status, latency_ms, COALESCE(error, ''), COALESCE(cert_expires, 0), COALESCE(links, 0), COALESCE(probe, '') FROM
 		(SELECT * FROM check_results WHERE check_id = ? ORDER BY ts DESC LIMIT ?) ORDER BY ts`, id, n)
 	if err != nil {
 		return nil, err
@@ -138,7 +140,7 @@ func (s *Store) RecentResults(ctx context.Context, id int64, n int) ([]CheckResu
 	out := []CheckResult{}
 	for rows.Next() {
 		r := CheckResult{CheckID: id}
-		if err := rows.Scan(&r.TS, &r.OK, &r.Status, &r.LatencyMS, &r.Error, &r.CertExpires, &r.Links); err != nil {
+		if err := rows.Scan(&r.TS, &r.OK, &r.Status, &r.LatencyMS, &r.Error, &r.CertExpires, &r.Links, &r.Probe); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
