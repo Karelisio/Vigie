@@ -78,6 +78,9 @@ var migrations = []string{
 	`ALTER TABLE ctr_minute ADD COLUMN tx REAL`,
 	`ALTER TABLE ctr_agg ADD COLUMN rx REAL`,
 	`ALTER TABLE ctr_agg ADD COLUMN tx REAL`,
+	`ALTER TABLE checks ADD COLUMN kind TEXT NOT NULL DEFAULT 'http'`,
+	`ALTER TABLE checks ADD COLUMN stremio_id TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE check_results ADD COLUMN links INTEGER`,
 }
 
 func Open(dir string) (*Store, error) {

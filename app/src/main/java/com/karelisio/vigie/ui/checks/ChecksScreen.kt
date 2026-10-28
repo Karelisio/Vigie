@@ -67,8 +67,10 @@ import com.karelisio.vigie.data.CheckHistory
 import com.karelisio.vigie.data.CheckInput
 import com.karelisio.vigie.data.CheckStatus
 import com.karelisio.vigie.data.Fmt
+import com.karelisio.vigie.data.versionAtLeast
 import com.karelisio.vigie.ui.components.ActionTone
 import com.karelisio.vigie.ui.components.AnimatedCounter
+import com.karelisio.vigie.ui.components.Chip
 import com.karelisio.vigie.ui.components.ConnectionBanner
 import com.karelisio.vigie.ui.components.EmptyState
 import com.karelisio.vigie.ui.components.MorphActionButton
@@ -250,6 +252,7 @@ fun ChecksScreen(nav: NavHostController, vm: ChecksViewModel = viewModel()) {
         CheckEditSheet(
             initial = editing,
             baseDomain = server?.host?.substringAfter('.'),
+            stremioSupported = versionAtLeast(state.agentVersion, 0, 4),
             onDismiss = { creating = false; editing = null },
             onSave = { input ->
                 vm.save(editing?.id, input)
@@ -310,12 +313,20 @@ internal fun CheckCard(
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Text(c.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        Uri.parse(c.url).host ?: c.url,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = scheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            Uri.parse(c.url).host ?: c.url,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (c.isStremio) {
+                            Spacer(Modifier.width(6.dp))
+                            Chip("Stremio", scheme.tertiaryContainer, scheme.onTertiaryContainer)
+                        }
+                    }
                     if (c.certExpires > 0) CertLine(c.certExpires)
                 }
                 Column(horizontalAlignment = Alignment.End) {
@@ -374,8 +385,13 @@ internal fun CheckCard(
                         Spacer(Modifier.height(6.dp))
                     }
                     Text(c.url, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                    val expects = if (c.isStremio) {
+                        "Contenu de test ${c.stremioId}" + (c.last?.let { " · dernier essai : ${linksLabel(it.links)}" } ?: "")
+                    } else {
+                        "Code attendu ${c.expectedStatus}" + (if (c.keyword.isNotEmpty()) " · contient « ${c.keyword} »" else "")
+                    }
                     Text(
-                        "Code attendu ${c.expectedStatus}" + (if (c.keyword.isNotEmpty()) " · contient « ${c.keyword} »" else "") +
+                        expects +
                             " · toutes les ${if (c.intervalSec >= 60) "${c.intervalSec / 60} min" else "${c.intervalSec} s"}" +
                             (if (c.latency24h > 0) " · moyenne 24 h : ${c.latency24h.toInt()} ms" else ""),
                         style = MaterialTheme.typography.bodySmall,
@@ -395,6 +411,12 @@ internal fun CheckCard(
             }
         }
     }
+}
+
+private fun linksLabel(n: Int) = when (n) {
+    0 -> "aucun lien"
+    1 -> "1 lien"
+    else -> "$n liens"
 }
 
 /** Validité du certificat HTTPS : alerte visuelle sous 14 jours. */

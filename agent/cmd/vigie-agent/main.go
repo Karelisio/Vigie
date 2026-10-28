@@ -20,6 +20,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/checks"
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/docker"
+	"github.com/karelisio/vigie/agent/internal/logwatch"
 	"github.com/karelisio/vigie/agent/internal/monitor"
 	"github.com/karelisio/vigie/agent/internal/qr"
 	"github.com/karelisio/vigie/agent/internal/settings"
@@ -94,6 +95,18 @@ func run(log *slog.Logger) error {
 	runner.OnChange = mon.SetChecks
 	runner.OnResult = eng.OnCheck
 
+	// Alertes sur les logs : un suiveur par conteneur visé, relancé à chaque démarrage ou recréation.
+	lw := logwatch.New(dk, mon.Containers, set.Get, eng.NotifyLog, log)
+	onEvent, onSettings := mon.OnEvent, set.OnChange
+	mon.OnEvent = func(ev docker.Event) {
+		onEvent(ev)
+		lw.OnEvent(ev)
+	}
+	set.OnChange = func(s settings.Settings) {
+		onSettings(s)
+		lw.Reload()
+	}
+
 	upd := updater.New(dk, log, updater.Hooks{
 		NoteAction:   mon.NoteAction,
 		SetTransient: mon.SetTransient,
@@ -124,9 +137,11 @@ func run(log *slog.Logger) error {
 		}
 	}
 
+	apiSrv := api.New(cfg, mon, dk, st, runner, eng, upd, log, version)
+	apiSrv.LogWatch = lw
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           api.New(cfg, mon, dk, st, runner, eng, upd, log, version).Handler(),
+		Handler:           apiSrv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
@@ -136,6 +151,7 @@ func run(log *slog.Logger) error {
 	go mon.Run(ctx)
 	go runner.Run(ctx)
 	go updater.NewNightly(upd, mon, st, log).Run(ctx)
+	go lw.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

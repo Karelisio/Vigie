@@ -36,6 +36,8 @@ type Server struct {
 	started   time.Time
 	tokenHash [32]byte
 	limiter   *limiter
+	// LogWatch suit les alertes sur les logs (renseigné après New).
+	LogWatch LogWatcher
 }
 
 func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, upd *updater.Manager, log *slog.Logger, version string) *Server {
@@ -98,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/report", s.weeklyReport)
 
 	mux.HandleFunc("GET /api/v1/alerts", s.listAlerts)
+	mux.HandleFunc("GET /api/v1/logwatch", s.logWatch)
 	mux.HandleFunc("GET /api/v1/audit", s.audit)
 
 	mux.HandleFunc("GET /api/v1/ws", s.live)
@@ -350,6 +353,9 @@ type checkInput struct {
 	TimeoutMS      int    `json:"timeout_ms"`
 	Enabled        *bool  `json:"enabled"`
 	Position       int    `json:"position"`
+	// Absents (appli antérieure à 0.4) : http à la création, mode inchangé à la modification.
+	Kind      *string `json:"kind"`
+	StremioID *string `json:"stremio_id"`
 }
 
 func (in checkInput) toCheck() store.Check {
@@ -359,6 +365,12 @@ func (in checkInput) toCheck() store.Check {
 	}
 	if in.Enabled != nil {
 		c.Enabled = *in.Enabled
+	}
+	if in.Kind != nil {
+		c.Kind = *in.Kind
+	}
+	if in.StremioID != nil {
+		c.StremioID = *in.StremioID
 	}
 	return c
 }
@@ -411,6 +423,12 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 	c.ID = id
 	if in.Position == 0 {
 		c.Position = existing.Position
+	}
+	if in.Kind == nil {
+		c.Kind = existing.Kind
+	}
+	if in.StremioID == nil {
+		c.StremioID = existing.StremioID
 	}
 	if err := checks.Validate(&c); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

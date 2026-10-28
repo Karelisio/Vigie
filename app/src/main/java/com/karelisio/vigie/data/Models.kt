@@ -120,6 +120,8 @@ data class CheckResult(
     @SerialName("latency_ms") val latencyMs: Long = 0,
     val error: String? = null,
     @SerialName("cert_expires") val certExpires: Long = 0,
+    /** Liens renvoyés par l'addon (check Stremio, agent 0.4 et plus). */
+    val links: Int = 0,
 )
 
 @Serializable
@@ -141,7 +143,12 @@ data class CheckStatus(
     @SerialName("consecutive_failures") val consecutiveFailures: Int = 0,
     val recent: List<CheckResult> = emptyList(),
     @SerialName("cert_expires") val certExpires: Long = 0,
-)
+    /** « http » ou « stremio » (agent 0.4 et plus). */
+    val kind: String = "http",
+    @SerialName("stremio_id") val stremioId: String = "",
+) {
+    val isStremio get() = kind == "stremio"
+}
 
 @Serializable
 data class CheckInput(
@@ -152,6 +159,9 @@ data class CheckInput(
     @SerialName("interval_sec") val intervalSec: Int = 60,
     @SerialName("timeout_ms") val timeoutMs: Int = 10000,
     val enabled: Boolean = true,
+    /** Absents (null) pour un agent antérieur à 0.4, qui refuse les champs inconnus. */
+    val kind: String? = null,
+    @SerialName("stremio_id") val stremioId: String? = null,
 )
 
 @Serializable

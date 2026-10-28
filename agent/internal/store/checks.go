@@ -18,6 +18,9 @@ type Check struct {
 	Enabled        bool   `json:"enabled"`
 	Position       int    `json:"position"`
 	CreatedAt      int64  `json:"created_at"`
+	// Kind vaut « http » (page web) ou « stremio » (addon testé avec une vraie recherche de liens).
+	Kind      string `json:"kind"`
+	StremioID string `json:"stremio_id"` // contenu de test (IMDb) du mode stremio
 }
 
 type CheckResult struct {
@@ -29,15 +32,17 @@ type CheckResult struct {
 	Error     string `json:"error,omitempty"`
 	// Expiration du certificat TLS (ms Unix), 0 si non HTTPS.
 	CertExpires int64 `json:"cert_expires,omitempty"`
+	// Nombre de liens renvoyés par l'addon (mode stremio).
+	Links int `json:"links,omitempty"`
 }
 
 var ErrNoRows = sql.ErrNoRows
 
-const checkCols = `id, name, url, expected_status, keyword, interval_sec, timeout_ms, enabled, position, created_at`
+const checkCols = `id, name, url, expected_status, keyword, interval_sec, timeout_ms, enabled, position, created_at, kind, stremio_id`
 
 func scanCheck(sc interface{ Scan(...any) error }) (Check, error) {
 	var c Check
-	err := sc.Scan(&c.ID, &c.Name, &c.URL, &c.ExpectedStatus, &c.Keyword, &c.IntervalSec, &c.TimeoutMS, &c.Enabled, &c.Position, &c.CreatedAt)
+	err := sc.Scan(&c.ID, &c.Name, &c.URL, &c.ExpectedStatus, &c.Keyword, &c.IntervalSec, &c.TimeoutMS, &c.Enabled, &c.Position, &c.CreatedAt, &c.Kind, &c.StremioID)
 	return c, err
 }
 
@@ -71,8 +76,8 @@ func (s *Store) CreateCheck(ctx context.Context, c *Check) error {
 	if c.Position == 0 {
 		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(position), 0) + 1 FROM checks`).Scan(&c.Position)
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO checks (name, url, expected_status, keyword, interval_sec, timeout_ms, enabled, position, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, c.Name, c.URL, c.ExpectedStatus, c.Keyword, c.IntervalSec, c.TimeoutMS, c.Enabled, c.Position, c.CreatedAt)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO checks (name, url, expected_status, keyword, interval_sec, timeout_ms, enabled, position, created_at, kind, stremio_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, c.Name, c.URL, c.ExpectedStatus, c.Keyword, c.IntervalSec, c.TimeoutMS, c.Enabled, c.Position, c.CreatedAt, c.Kind, c.StremioID)
 	if err != nil {
 		return err
 	}
@@ -81,8 +86,8 @@ func (s *Store) CreateCheck(ctx context.Context, c *Check) error {
 }
 
 func (s *Store) UpdateCheck(ctx context.Context, c *Check) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE checks SET name = ?, url = ?, expected_status = ?, keyword = ?, interval_sec = ?, timeout_ms = ?, enabled = ?, position = ?
-		WHERE id = ?`, c.Name, c.URL, c.ExpectedStatus, c.Keyword, c.IntervalSec, c.TimeoutMS, c.Enabled, c.Position, c.ID)
+	res, err := s.db.ExecContext(ctx, `UPDATE checks SET name = ?, url = ?, expected_status = ?, keyword = ?, interval_sec = ?, timeout_ms = ?, enabled = ?, position = ?,
+		kind = ?, stremio_id = ? WHERE id = ?`, c.Name, c.URL, c.ExpectedStatus, c.Keyword, c.IntervalSec, c.TimeoutMS, c.Enabled, c.Position, c.Kind, c.StremioID, c.ID)
 	if err != nil {
 		return err
 	}
@@ -106,8 +111,8 @@ func (s *Store) DeleteCheck(ctx context.Context, id int64) error {
 }
 
 func (s *Store) AddResult(ctx context.Context, r CheckResult) error {
-	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO check_results (check_id, ts, ok, status, latency_ms, error, cert_expires) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.CheckID, r.TS, r.OK, r.Status, r.LatencyMS, r.Error, r.CertExpires)
+	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO check_results (check_id, ts, ok, status, latency_ms, error, cert_expires, links) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.CheckID, r.TS, r.OK, r.Status, r.LatencyMS, r.Error, r.CertExpires, r.Links)
 	if err != nil {
 		return err
 	}
@@ -124,7 +129,7 @@ func (s *Store) AddResult(ctx context.Context, r CheckResult) error {
 
 // RecentResults renvoie les n derniers résultats, du plus ancien au plus récent.
 func (s *Store) RecentResults(ctx context.Context, id int64, n int) ([]CheckResult, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ts, ok, status, latency_ms, COALESCE(error, ''), COALESCE(cert_expires, 0) FROM
+	rows, err := s.db.QueryContext(ctx, `SELECT ts, ok, status, latency_ms, COALESCE(error, ''), COALESCE(cert_expires, 0), COALESCE(links, 0) FROM
 		(SELECT * FROM check_results WHERE check_id = ? ORDER BY ts DESC LIMIT ?) ORDER BY ts`, id, n)
 	if err != nil {
 		return nil, err
@@ -133,7 +138,7 @@ func (s *Store) RecentResults(ctx context.Context, id int64, n int) ([]CheckResu
 	out := []CheckResult{}
 	for rows.Next() {
 		r := CheckResult{CheckID: id}
-		if err := rows.Scan(&r.TS, &r.OK, &r.Status, &r.LatencyMS, &r.Error, &r.CertExpires); err != nil {
+		if err := rows.Scan(&r.TS, &r.OK, &r.Status, &r.LatencyMS, &r.Error, &r.CertExpires, &r.Links); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

@@ -67,10 +67,13 @@ import com.karelisio.vigie.appContainer
 import com.karelisio.vigie.data.AgentSettings
 import com.karelisio.vigie.data.ApiException
 import com.karelisio.vigie.data.versionAtLeast
+import com.karelisio.vigie.data.LogRule
+import com.karelisio.vigie.data.updateLogRules
 import com.karelisio.vigie.ui.components.EmptyState
 import com.karelisio.vigie.ui.components.SectionCard
 import com.karelisio.vigie.ui.components.cascade
 import com.karelisio.vigie.ui.components.rememberHaptics
+import com.karelisio.vigie.ui.logs.logAlertsSupported
 import com.karelisio.vigie.ui.navigation.LocalSnackbar
 import com.karelisio.vigie.ui.theme.numeric
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -84,6 +87,9 @@ class AlertSettingsViewModel : ViewModel() {
     val saved = _saved.asStateFlow()
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
+    /** Alertes sur les logs : enregistrées dès leur ajout ou suppression, hors brouillon. */
+    private val _logRules = MutableStateFlow<List<LogRule>>(emptyList())
+    val logRules = _logRules.asStateFlow()
 
     init {
         load()
@@ -93,7 +99,7 @@ class AlertSettingsViewModel : ViewModel() {
         viewModelScope.launch {
             _error.value = null
             runCatching { repo.settings() }
-                .onSuccess { _saved.value = it }
+                .onSuccess { _saved.value = it; _logRules.value = it.logRules }
                 .onFailure {
                     _error.value = if (it is ApiException && it.code == 404) {
                         "Ton agent est trop ancien pour régler les alertes depuis l'appli. Mets-le à jour (Pull + Redeploy dans Dockhand)."
@@ -102,7 +108,12 @@ class AlertSettingsViewModel : ViewModel() {
         }
     }
 
-    suspend fun save(s: AgentSettings): Result<AgentSettings> = runCatching { repo.saveSettings(s) }.onSuccess { _saved.value = it }
+    suspend fun save(s: AgentSettings): Result<AgentSettings> =
+        runCatching { repo.saveSettings(s.copy(logRules = _logRules.value)) }.onSuccess { _saved.value = it }
+
+    suspend fun changeLogRules(change: (List<LogRule>) -> List<LogRule>) {
+        _logRules.value = repo.updateLogRules(change).logRules
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -111,6 +122,8 @@ fun AlertSettingsScreen(nav: NavHostController, vm: AlertSettingsViewModel = vie
     val saved by vm.saved.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val live by appContainer.repository.live.collectAsStateWithLifecycle()
+    val logRules by vm.logRules.collectAsStateWithLifecycle()
+    val logAlerts = logAlertsSupported()
     var draft by remember(saved) { mutableStateOf(saved) }
     var saving by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf<String?>(null) }
@@ -246,6 +259,9 @@ fun AlertSettingsScreen(nav: NavHostController, vm: AlertSettingsViewModel = vie
                                 }
                             }
                         }
+                    }
+                    if (logAlerts) {
+                        item { LogRulesCard(logRules, vm::changeLogRules, Modifier.cascade(5)) }
                     }
                 }
             }

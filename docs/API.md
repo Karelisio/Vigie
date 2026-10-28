@@ -37,11 +37,13 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 | Méthode | Route | Corps / réponse |
 | --- | --- | --- |
 | GET | `/api/v1/checks` | état de chaque check : `state` (`up`/`down`/`pending`/`disabled`), `last`, `recent[]` (40 derniers), `uptime_24h`, `uptime_7d`, `latency_24h`, `consecutive_failures`, `cert_expires` (fin de validité du certificat HTTPS, ms) |
-| POST | `/api/v1/checks` | `{name, url, expected_status, keyword, interval_sec, timeout_ms, enabled}` |
-| PUT | `/api/v1/checks/{id}` | idem |
+| POST | `/api/v1/checks` | `{name, url, expected_status, keyword, interval_sec, timeout_ms, enabled, kind, stremio_id}` |
+| PUT | `/api/v1/checks/{id}` | idem (`kind` et `stremio_id` absents : valeurs actuelles conservées) |
 | DELETE | `/api/v1/checks/{id}` | |
 | POST | `/api/v1/checks/{id}/run` | exécute immédiatement, renvoie l'état |
 | GET | `/api/v1/checks/{id}/history?range=24h\|7d\|30d\|90d&buckets=48` | `buckets[]` (`ts, total, ok, latency`), `uptime`, `latency` |
+
+`kind` vaut `http` (défaut) ou `stremio`. En mode `stremio`, `url` est le manifest de l'addon (`…/manifest.json`) : l'agent vérifie qu'il déclare la ressource `stream`, puis demande les liens de `stremio_id` (IMDb, `tt0111161` par défaut ; `tt0903747:1:1` pour un épisode) et réussit si au moins un lien est renvoyé. `expected_status` et `keyword` sont ignorés ; intervalle minimum 300 s, délai minimum 30 s. Chaque résultat (`last`, `recent[]`) porte alors `links`, le nombre de liens trouvés.
 
 ## Notifications, alertes, journal
 
@@ -51,6 +53,7 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 | DELETE | `/api/v1/devices` | `{token}` |
 | POST | `/api/v1/devices/test` | `{token?}` : notification de test |
 | GET | `/api/v1/alerts?limit=50` | historique des alertes (30 jours) |
+| GET | `/api/v1/logwatch` | alertes sur les logs (`log_rules` des réglages) : `[{rule_id, container, active, matches_24h, last_match, last_line}]` ; `active` : logs du conteneur en cours de lecture |
 | GET | `/api/v1/audit?limit=100` | journal des actions (90 jours) |
 | POST | `/api/v1/stacks/{projet}/{action}` | `action` : `update`, `pull`, `restart`, `start`, `stop` sur tous les conteneurs du projet compose (202 : `job`) |
 | POST | `/api/v1/updates/apply` | met à jour tous les conteneurs qui ont une nouvelle image (202 : `job`) |

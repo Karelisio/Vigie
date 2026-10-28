@@ -11,7 +11,7 @@ func TestValidate(t *testing.T) {
 	if err := Validate(&c); err != nil {
 		t.Fatal(err)
 	}
-	if c.Name != "Comet" || c.ExpectedStatus != 200 || c.IntervalSec != 15 || c.TimeoutMS != 10000 {
+	if c.Name != "Comet" || c.ExpectedStatus != 200 || c.IntervalSec != 15 || c.TimeoutMS != 10000 || c.Kind != KindHTTP {
 		t.Fatalf("normalisation inattendue : %+v", c)
 	}
 	for _, u := range []string{"", "ftp://x", "https://", "not a url"} {

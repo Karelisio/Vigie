@@ -1,4 +1,5 @@
-// Package checks exécute les vérifications HTTP configurées (URL, code attendu, mot-clé, latence).
+// Package checks exécute les vérifications configurées : HTTP (URL, code attendu, mot-clé, latence)
+// ou addon Stremio (manifest puis vraie recherche de liens).
 package checks
 
 import (
@@ -172,6 +173,14 @@ func Validate(c *store.Check) error {
 	}
 	if len(c.Keyword) > 200 {
 		return errors.New("mot-clé trop long")
+	}
+	switch c.Kind {
+	case "", KindHTTP:
+		c.Kind = KindHTTP
+	case KindStremio:
+		return validateStremio(c, u)
+	default:
+		return errors.New("type de check inconnu (http ou stremio)")
 	}
 	return nil
 }
@@ -379,6 +388,9 @@ func (r *Runner) execute(ctx context.Context, c store.Check) {
 }
 
 func (r *Runner) probe(ctx context.Context, c store.Check) store.CheckResult {
+	if c.Kind == KindStremio {
+		return r.probeStremio(ctx, c)
+	}
 	res := store.CheckResult{CheckID: c.ID, TS: time.Now().UnixMilli()}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.TimeoutMS)*time.Millisecond)
 	defer cancel()
@@ -387,9 +399,7 @@ func (r *Runner) probe(ctx context.Context, c store.Check) store.CheckResult {
 		res.Error = err.Error()
 		return res
 	}
-	req.Header.Set("User-Agent", "Vigie/"+r.version+" (+https://github.com/Karelisio/Vigie)")
-	req.Header.Set("Accept", "application/json, text/html;q=0.9, */*;q=0.8")
-	req.Header.Set("Cache-Control", "no-cache")
+	r.setHeaders(req)
 	start := time.Now()
 	resp, err := r.client.Do(req)
 	if err != nil {
@@ -418,6 +428,12 @@ func (r *Runner) probe(ctx context.Context, c store.Check) store.CheckResult {
 		res.OK = true
 	}
 	return res
+}
+
+func (r *Runner) setHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", "Vigie/"+r.version+" (+https://github.com/Karelisio/Vigie)")
+	req.Header.Set("Accept", "application/json, text/html;q=0.9, */*;q=0.8")
+	req.Header.Set("Cache-Control", "no-cache")
 }
 
 // describeBody résume ce qui a été reçu, pour diagnostiquer un mot-clé absent.

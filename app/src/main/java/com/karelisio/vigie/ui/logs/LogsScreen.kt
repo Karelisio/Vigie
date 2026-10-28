@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.KeyboardDoubleArrowDown
+import androidx.compose.material.icons.rounded.NotificationAdd
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
@@ -78,10 +79,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.karelisio.vigie.appContainer
+import com.karelisio.vigie.data.Container
 import com.karelisio.vigie.data.Fmt
 import com.karelisio.vigie.data.LogEvent
+import com.karelisio.vigie.data.updateLogRules
 import com.karelisio.vigie.ui.components.StatusDot
 import com.karelisio.vigie.ui.components.rememberHaptics
+import com.karelisio.vigie.ui.navigation.LocalSnackbar
 import com.karelisio.vigie.ui.navigation.LogsRoute
 import com.karelisio.vigie.ui.theme.StatusColors
 import com.karelisio.vigie.ui.theme.Vigie
@@ -230,6 +234,10 @@ fun LogsScreen(nav: NavHostController, route: LogsRoute, vm: LogsViewModel = vie
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
     val context = LocalContext.current
+    val snackbar = LocalSnackbar.current
+    val logAlerts = logAlertsSupported()
+    // Conteneurs proposés dans le dialogue d'alerte (null : dialogue fermé).
+    var alertContainers by remember { mutableStateOf<List<Container>?>(null) }
 
     val shown = remember(lines, query, levelFilter) {
         lines.filter { l ->
@@ -294,6 +302,11 @@ fun LogsScreen(nav: NavHostController, route: LogsRoute, vm: LogsViewModel = vie
                             Icon(if (status == StreamStatus.Paused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause, "Pause")
                         }
                         IconButton(onClick = { haptics.tick(); vm.clear() }) { Icon(Icons.Rounded.DeleteSweep, "Effacer") }
+                        if (logAlerts) {
+                            IconButton(onClick = { haptics.tick(); alertContainers = appContainer.repository.live.value.containers }) {
+                                Icon(Icons.Rounded.NotificationAdd, "Créer une alerte sur ces logs")
+                            }
+                        }
                     },
                 )
                 AnimatedVisibility(searching, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
@@ -379,6 +392,19 @@ fun LogsScreen(nav: NavHostController, route: LogsRoute, vm: LogsViewModel = vie
                     Text("Connexion perdue · toucher pour réessayer", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onErrorContainer)
                 }
             }
+        }
+    }
+
+    alertContainers?.let { containers ->
+        LogRuleDialog(
+            containers = containers.map { it.name },
+            initialContainer = containers.find { it.id == route.id }?.name ?: route.name,
+            initialPattern = query,
+            onDismiss = { alertContainers = null },
+        ) { rule ->
+            appContainer.repository.updateLogRules { it + rule }
+            alertContainers = null
+            scope.launch { snackbar.showSnackbar("Alerte ajoutée pour ${rule.container}") }
         }
     }
 }
