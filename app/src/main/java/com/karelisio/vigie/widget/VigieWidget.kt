@@ -46,11 +46,11 @@ import com.karelisio.vigie.data.CachedState
 import com.karelisio.vigie.data.Fmt
 import kotlin.math.roundToInt
 
-private val Ok = ColorProvider(day = Color(0xFF1B873F), night = Color(0xFF6EDB8F))
-private val Warn = ColorProvider(day = Color(0xFFB25E00), night = Color(0xFFFFB86B))
-private val Crit = ColorProvider(day = Color(0xFFC62828), night = Color(0xFFFF8A80))
+internal val Ok = ColorProvider(day = Color(0xFF1B873F), night = Color(0xFF6EDB8F))
+internal val Warn = ColorProvider(day = Color(0xFFB25E00), night = Color(0xFFFFB86B))
+internal val Crit = ColorProvider(day = Color(0xFFC62828), night = Color(0xFFFF8A80))
 
-private fun statusColor(status: String?): ColorProvider = when (status) {
+internal fun statusColor(status: String?): ColorProvider = when (status) {
     "ok" -> Ok
     "warning" -> Warn
     "critical" -> Crit
@@ -59,15 +59,16 @@ private fun statusColor(status: String?): ColorProvider = when (status) {
 
 /** Widget : état global + CPU/RAM, couleurs dynamiques, redimensionnable. Un appui ouvre l'appli. */
 class VigieWidget : GlanceAppWidget() {
-    override val sizeMode = SizeMode.Responsive(setOf(SMALL, MEDIUM, LARGE))
+    override val sizeMode = SizeMode.Responsive(setOf(SMALL, MEDIUM, LARGE, XLARGE))
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val c = appContainer
         val server = c.servers.active
         val state = server?.let { c.cache.read(it.id) }
+        val favorites = server?.let { c.prefs.current().favorites[it.id] }.orEmpty()
         provideContent {
             GlanceTheme {
-                WidgetContent(serverName = server?.name, state = state)
+                WidgetContent(serverName = server?.name, state = state, favorites = favorites)
             }
         }
     }
@@ -76,11 +77,12 @@ class VigieWidget : GlanceAppWidget() {
         val SMALL = DpSize(110.dp, 48.dp)
         val MEDIUM = DpSize(180.dp, 110.dp)
         val LARGE = DpSize(260.dp, 170.dp)
+        val XLARGE = DpSize(260.dp, 250.dp)
     }
 }
 
 @Composable
-private fun WidgetContent(serverName: String?, state: CachedState?) {
+private fun WidgetContent(serverName: String?, state: CachedState?, favorites: Set<String>) {
     val size = LocalSize.current
     val ov = state?.overview
     val sys = ov?.system ?: state?.system
@@ -159,6 +161,12 @@ private fun WidgetContent(serverName: String?, state: CachedState?) {
                             style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 12.sp),
                         )
                     }
+                    // Conteneurs épinglés (grand format).
+                    val pinned = state?.containers.orEmpty().filter { it.name in favorites }.sortedBy { it.name }
+                    if (size.height >= 240.dp && pinned.isNotEmpty()) {
+                        Spacer(GlanceModifier.height(8.dp))
+                        pinned.take(4).forEach { ct -> Pinned(ct) }
+                    }
                 }
             } else if (sys != null) {
                 Text(
@@ -168,6 +176,30 @@ private fun WidgetContent(serverName: String?, state: CachedState?) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun Pinned(ct: com.karelisio.vigie.data.Container) {
+    val color = when {
+        ct.hasProblem -> Crit
+        !ct.running -> GlanceTheme.colors.outline
+        else -> Ok
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = GlanceModifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Box(GlanceModifier.size(8.dp).cornerRadius(4.dp).background(color)) {}
+        Spacer(GlanceModifier.width(8.dp))
+        Text(
+            ct.name,
+            maxLines = 1,
+            style = TextStyle(color = GlanceTheme.colors.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+            modifier = GlanceModifier.defaultWeight(),
+        )
+        Text(
+            if (ct.running) "${ct.cpu.roundToInt()} % · ${Fmt.bytes(ct.memUsed)}" else "arrêté",
+            maxLines = 1,
+            style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 12.sp),
+        )
     }
 }
 

@@ -131,6 +131,7 @@ fun VigieNavHost(nav: NavHostController, start: Any, snackbar: SnackbarHostState
                         screen<ScanRoute> { ScanScreen(nav) }
                         screen<PermissionsRoute> { PermissionsScreen(nav) }
                         screen<AlertsRoute> { AlertsScreen(nav) }
+                        screen<AlertSettingsRoute> { com.karelisio.vigie.ui.settings.AlertSettingsScreen(nav) }
                         screen<AuditRoute> { AuditScreen(nav) }
                         screen<AboutRoute> { AboutScreen(nav) }
                     }

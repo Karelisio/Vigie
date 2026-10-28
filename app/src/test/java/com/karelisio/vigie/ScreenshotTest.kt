@@ -78,7 +78,7 @@ class ScreenshotTest {
 
     private val containers = listOf(
         ctr("aiostreams", "ghcr.io/viren070/aiostreams:latest", cpu = 2.4, mem = 210),
-        ctr("comet", "g0ldyy/comet:latest", cpu = 0.8, mem = 145),
+        ctr("comet", "g0ldyy/comet:latest", cpu = 0.8, mem = 145).copy(updateAvailable = true),
         ctr("aiometadata", "ghcr.io/cedya77/aiometadata:latest", cpu = 0.3, mem = 98),
         ctr("prowlarr", "lscr.io/linuxserver/prowlarr", cpu = 0.1, mem = 180),
         ctr("redis", "redis:7-alpine", cpu = 0.2, mem = 12),
@@ -102,6 +102,7 @@ class ScreenshotTest {
     private fun check(id: Long, name: String, url: String, up: Boolean, lat: Long) = CheckStatus(
         id = id, name = name, url = url, state = if (up) "up" else "down",
         last = CheckResult(now, up, if (up) 200 else 502, lat, if (up) null else "code 502 (attendu 200)"),
+        certExpires = now + (if (id == 2L) 9 else 61) * 86_400_000L,
         uptime24h = if (up) 100.0 else 93.75, consecutiveFailures = if (up) 0 else 3,
         recent = List(30) { i -> CheckResult(now - (30 - i) * 60_000L, up || i < 26, 200, lat + (sin(i / 3.0) * 30).toLong()) },
     )
@@ -175,7 +176,7 @@ class ScreenshotTest {
     @Test
     fun containersList() = shot("containers") {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            containers.sortedBy { if (it.hasProblem) 0 else if (it.running) 1 else 2 }.forEach { ContainerCard(it, busy = it.name == "comet") {} }
+            containers.sortedBy { if (it.hasProblem) 0 else if (it.running) 1 else 2 }.forEach { ContainerCard(it, busy = it.name == "prowlarr", onOpen = {}, favorite = it.name == "aiostreams") }
             StatsCard(containers[0], Modifier.fillMaxWidth())
         }
     }
@@ -209,6 +210,33 @@ class ScreenshotTest {
             }
         }
     }
+
+    @Test
+    fun extras() = shot("extras") {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            com.karelisio.vigie.ui.home.OracleCard(
+                com.karelisio.vigie.data.OracleReport(
+                    applicable = true, risk = "medium", days = 7.0,
+                    cpu = com.karelisio.vigie.data.OracleMetric(8.4, below = true, applies = true),
+                    mem = com.karelisio.vigie.data.OracleMetric(46.0, below = false, applies = true),
+                    net = com.karelisio.vigie.data.OracleMetric(3.1, below = true, applies = true),
+                    netMbps = 4000.0, summary = "Un seul critère maintient l'instance au-dessus du seuil d'inactivité.",
+                ),
+            )
+            fun e(ts: Long, a: String, d: String = "", s: String = "docker") = com.karelisio.vigie.data.TimelineEvent(ts, a, d, s)
+            com.karelisio.vigie.ui.containers.TimelineCard(
+                listOf(
+                    e(now - 600_000, "health", "healthy"),
+                    e(now - 640_000, "start"), e(now - 650_000, "die", "1"),
+                    e(now - 86_400_000, "restart"), e(now - 86_401_000, "start"), e(now - 86_402_000, "stop"),
+                    e(now - 86_402_500, "die", "143"), e(now - 86_403_000, "restart", "ok", "vigie"),
+                    e(now - 3 * 86_400_000L, "start"), e(now - 3 * 86_400_000L - 2000, "create"), e(now - 3 * 86_400_000L - 4000, "destroy"),
+                ),
+            )
+        }
+    }
+
+    @Test fun lockScreen() = shot("lock", dark = true) { com.karelisio.vigie.security.LockScreen(visible = true) {} }
 
     @Test fun onboardingWelcome() = shot("onboarding_welcome") { WelcomePage(active = true) }
 

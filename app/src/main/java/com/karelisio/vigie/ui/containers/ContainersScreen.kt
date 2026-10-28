@@ -2,7 +2,9 @@ package com.karelisio.vigie.ui.containers
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +26,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.NewReleases
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.Update
 import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RestartAlt
@@ -35,6 +40,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.TooltipAnchorPosition
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -79,6 +89,8 @@ import com.karelisio.vigie.ui.navigation.ContainerRoute
 import com.karelisio.vigie.ui.navigation.LocalSnackbar
 import com.karelisio.vigie.ui.navigation.sharedBoundsOrSelf
 import com.karelisio.vigie.ui.navigation.sharedElementOrSelf
+import com.karelisio.vigie.security.LocalActionGuard
+import com.karelisio.vigie.ui.components.SectionTitle
 import com.karelisio.vigie.ui.theme.Vigie
 import com.karelisio.vigie.ui.theme.numeric
 import kotlinx.coroutines.delay
@@ -88,7 +100,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class ContainerFilter(val label: String) { All("Tous"), Running("Actifs"), Stopped("Arrêtés"), Problems("En défaut") }
+enum class ContainerFilter(val label: String) { All("Tous"), Running("Actifs"), Stopped("Arrêtés"), Problems("En défaut"), Updates("Mises à jour") }
 
 class ContainersViewModel : ViewModel() {
     private val repo = appContainer.repository
@@ -97,6 +109,25 @@ class ContainersViewModel : ViewModel() {
     val busy = _busy.asStateFlow()
     private val _refreshing = MutableStateFlow(false)
     val refreshing = _refreshing.asStateFlow()
+    private val _checkingImages = MutableStateFlow(false)
+    val checkingImages = _checkingImages.asStateFlow()
+
+    /** Interroge les registres pour toutes les images ; renvoie le nombre de mises à jour disponibles. */
+    fun checkImages(done: (Result<Int>) -> Unit) {
+        viewModelScope.launch {
+            _checkingImages.value = true
+            val r = runCatching { repo.checkImages().values.count { it.updateAvailable } }
+            _checkingImages.value = false
+            done(r)
+        }
+    }
+
+    fun toggleFavorite(name: String, done: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val id = appContainer.servers.active?.id ?: return@launch
+            done(appContainer.prefs.toggleFavorite(id, name))
+        }
+    }
 
     fun action(c: Container, action: String, done: (Result<Unit>) -> Unit) {
         viewModelScope.launch {
@@ -129,6 +160,11 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
     val state by vm.live.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
+    val checkingImages by vm.checkingImages.collectAsStateWithLifecycle()
+    val prefs by appContainer.prefs.flow.collectAsStateWithLifecycle(initialValue = null)
+    val activeId by appContainer.servers.activeId.collectAsStateWithLifecycle()
+    val favorites = prefs?.favorites?.get(activeId).orEmpty()
+    val guard = LocalActionGuard.current
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf(ContainerFilter.All) }
     var confirmStop by remember { mutableStateOf<Container?>(null) }
@@ -148,25 +184,75 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
                     ContainerFilter.Running -> c.running
                     ContainerFilter.Stopped -> !c.running
                     ContainerFilter.Problems -> c.hasProblem
+                    ContainerFilter.Updates -> c.updateAvailable
                 }
             }
             .sortedWith(compareBy<Container> { rank(it) }.thenBy { it.name.lowercase() })
             .toList()
     }
+    // Les conteneurs épinglés restent en tête de liste.
+    val pinned = list.filter { it.name in favorites }
+    val others = list.filter { it.name !in favorites }
 
     fun run(c: Container, action: String) {
         val verb = mapOf("start" to "démarré", "stop" to "arrêté", "restart" to "redémarré")[action]
-        vm.action(c, action) { r ->
-            scope.launch {
-                if (r.isSuccess) {
-                    haptics.confirm()
-                    snackbar.showSnackbar("${c.name} $verb")
-                } else {
-                    haptics.reject()
-                    snackbar.showSnackbar("Échec : ${r.exceptionOrNull()?.message}")
+        val label = mapOf("start" to "Démarrer", "stop" to "Arrêter", "restart" to "Redémarrer")[action]
+        scope.launch {
+            if (!guard("$label ${c.name}")) return@launch
+            vm.action(c, action) { r ->
+                scope.launch {
+                    if (r.isSuccess) {
+                        haptics.confirm()
+                        snackbar.showSnackbar("${c.name} $verb")
+                    } else {
+                        haptics.reject()
+                        snackbar.showSnackbar("Échec : ${r.exceptionOrNull()?.message}")
+                    }
                 }
             }
         }
+    }
+
+    fun toggleFavorite(c: Container) {
+        haptics.longPress()
+        vm.toggleFavorite(c.name) { pinnedNow ->
+            scope.launch {
+                snackbar.currentSnackbarData?.dismiss()
+                snackbar.showSnackbar(if (pinnedNow) "${c.name} épinglé en haut de la liste" else "${c.name} désépinglé")
+            }
+        }
+    }
+
+    fun checkImages() {
+        haptics.tick()
+        vm.checkImages { r ->
+            scope.launch {
+                snackbar.showSnackbar(
+                    r.fold(
+                        { n -> if (n == 0) "Toutes les images sont à jour" else if (n == 1) "1 mise à jour d'image disponible" else "$n mises à jour d'images disponibles" },
+                        { "Vérification impossible : ${it.message}" },
+                    ),
+                )
+                if ((r.getOrNull() ?: 0) > 0) filter = ContainerFilter.Updates
+            }
+        }
+    }
+
+    @Composable
+    fun androidx.compose.foundation.lazy.LazyItemScope.Row_(index: Int, c: Container) {
+        SwipeableContainer(
+            c = c,
+            busy = c.id in busy,
+            favorite = c.name in favorites,
+            modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .animateItem()
+                .cascade(index, key = "list"),
+            onOpen = { nav.navigate(ContainerRoute(c.id, c.name)) },
+            onLongPress = { toggleFavorite(c) },
+            onRestart = { run(c, "restart") },
+            onToggle = { if (c.running) confirmStop = c else run(c, "start") },
+        )
     }
 
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 96.dp
@@ -177,13 +263,28 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item(key = "title") {
-                Column(Modifier.statusBarsPadding().padding(start = 20.dp, end = 20.dp, top = 16.dp)) {
-                    Text("Conteneurs", style = MaterialTheme.typography.headlineLargeEmphasized)
-                    Text(
-                        "${all.count { it.running }} actifs sur ${all.size}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                Row(
+                    Modifier.statusBarsPadding().padding(start = 20.dp, end = 12.dp, top = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Conteneurs", style = MaterialTheme.typography.headlineLargeEmphasized)
+                        Text(
+                            "${all.count { it.running }} actifs sur ${all.size}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TooltipBox(
+                        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Below),
+                        tooltip = { PlainTooltip { Text("Vérifier les mises à jour d'images") } },
+                        state = rememberTooltipState(),
+                    ) {
+                        IconButton(onClick = ::checkImages, enabled = !checkingImages) {
+                            if (checkingImages) LoadingIndicator(Modifier.size(28.dp))
+                            else Icon(Icons.Rounded.Update, "Vérifier les mises à jour d'images")
+                        }
+                    }
                 }
             }
             item(key = "banner") { ConnectionBanner(state) }
@@ -209,12 +310,15 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
             }
             item(key = "filters") {
                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(ContainerFilter.entries) { f ->
+                    val updates = all.count { it.updateAvailable }
+                    val shown = ContainerFilter.entries.filter { it != ContainerFilter.Updates || updates > 0 || filter == it }
+                    items(shown, key = { it.name }) { f ->
                         val n = when (f) {
                             ContainerFilter.All -> all.size
                             ContainerFilter.Running -> all.count { it.running }
                             ContainerFilter.Stopped -> all.count { !it.running }
                             ContainerFilter.Problems -> all.count { it.hasProblem }
+                            ContainerFilter.Updates -> updates
                         }
                         FilterChip(
                             selected = filter == f,
@@ -233,20 +337,11 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
                     )
                 }
             }
-            items(list, key = { it.id }) { c ->
-                val index = list.indexOf(c)
-                SwipeableContainer(
-                    c = c,
-                    busy = c.id in busy,
-                    modifier = Modifier
-                        .padding(horizontal = 16.dp)
-                        .animateItem()
-                        .cascade(index, key = "list"),
-                    onOpen = { nav.navigate(ContainerRoute(c.id, c.name)) },
-                    onRestart = { run(c, "restart") },
-                    onToggle = { if (c.running) confirmStop = c else run(c, "start") },
-                )
-            }
+            val sections = pinned.isNotEmpty() && others.isNotEmpty()
+            if (sections) item(key = "h-pinned") { SectionTitle("Épinglés", Modifier.animateItem().padding(horizontal = 20.dp)) }
+            items(pinned, key = { it.id }) { c -> Row_(pinned.indexOf(c), c) }
+            if (sections) item(key = "h-others") { SectionTitle("Autres", Modifier.animateItem().padding(horizontal = 20.dp)) }
+            items(others, key = { it.id }) { c -> Row_(pinned.size + others.indexOf(c), c) }
         }
     }
 
@@ -266,8 +361,10 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
 private fun SwipeableContainer(
     c: Container,
     busy: Boolean,
+    favorite: Boolean,
     modifier: Modifier,
     onOpen: () -> Unit,
+    onLongPress: () -> Unit,
     onRestart: () -> Unit,
     onToggle: () -> Unit,
 ) {
@@ -322,38 +419,66 @@ private fun SwipeableContainer(
             }
         },
     ) {
-        ContainerCard(c, busy, onOpen)
+        ContainerCard(c, busy, onOpen, onLongPress, favorite)
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ContainerCard(c: Container, busy: Boolean, onOpen: () -> Unit) {
+fun ContainerCard(c: Container, busy: Boolean, onOpen: () -> Unit, onLongPress: (() -> Unit)? = null, favorite: Boolean = false) {
     val status = Vigie.status
     val vs = c.visualStatus()
     val container by animateColorAsState(
         if (c.hasProblem) status.criticalContainer.copy(alpha = 0.55f) else MaterialTheme.colorScheme.surfaceContainer,
         label = "cardColor",
     )
+    val shape = RoundedCornerShape(24.dp)
     Surface(
-        onClick = onOpen,
         color = container,
-        shape = RoundedCornerShape(24.dp),
+        shape = shape,
         modifier = Modifier
             .fillMaxWidth()
             .sharedBoundsOrSelf("card-${c.id}")
-            .shakeOnAppear(c.hasProblem, c.problem),
+            .shakeOnAppear(c.hasProblem, c.problem)
+            .clip(shape)
+            .combinedClickable(onClick = onOpen, onLongClick = onLongPress, onLongClickLabel = if (favorite) "Désépingler" else "Épingler"),
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             StatusDot(vs, Modifier.sharedElementOrSelf("dot-${c.id}"), size = 11.dp)
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    c.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.sharedBoundsOrSelf("name-${c.id}", text = true),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        c.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false).sharedBoundsOrSelf("name-${c.id}", text = true),
+                    )
+                    if (favorite) {
+                        Icon(
+                            Icons.Rounded.Star, "Épinglé",
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.padding(start = 4.dp).size(16.dp),
+                        )
+                    }
+                    if (c.updateAvailable) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier.padding(start = 6.dp),
+                        ) {
+                            Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.NewReleases, null, Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
+                                Text(
+                                    " MAJ",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                            }
+                        }
+                    }
+                }
                 Text(
                     c.shortImage,
                     style = MaterialTheme.typography.bodySmall,

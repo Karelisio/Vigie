@@ -23,6 +23,10 @@ Dates en millisecondes Unix. Erreurs : `{"error": "message"}` avec le code HTTP 
 | GET | `/api/v1/containers/{id}/logs?tail=300` | `lines[]` : `ts, stream (stdout/stderr), line` |
 | WS | `/api/v1/containers/{id}/logs/stream?tail=300` | messages `{"type":"lines","data":[…]}`, puis `{"type":"end"}` si le conteneur s'arrête |
 | POST | `/api/v1/containers/{id}/start` · `/stop` · `/restart` | `{ok, state}` |
+| GET | `/api/v1/containers/{id}/events?limit=80` | chronologie (30 jours) : `ts, action, detail, source` (`docker` ou `vigie`) |
+| POST | `/api/v1/containers/{id}/mute` | `{muted}` : coupe ou réactive ses notifications, renvoie les réglages |
+
+Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image publiée sur le registre) et `muted`.
 
 `problem` vaut `""`, `down` (arrêt anormal), `oom`, `restarting` ou `unhealthy`. CPU en % de la capacité totale de l'hôte.
 
@@ -30,7 +34,7 @@ Dates en millisecondes Unix. Erreurs : `{"error": "message"}` avec le code HTTP 
 
 | Méthode | Route | Corps / réponse |
 | --- | --- | --- |
-| GET | `/api/v1/checks` | état de chaque check : `state` (`up`/`down`/`pending`/`disabled`), `last`, `recent[]` (40 derniers), `uptime_24h`, `uptime_7d`, `latency_24h`, `consecutive_failures` |
+| GET | `/api/v1/checks` | état de chaque check : `state` (`up`/`down`/`pending`/`disabled`), `last`, `recent[]` (40 derniers), `uptime_24h`, `uptime_7d`, `latency_24h`, `consecutive_failures`, `cert_expires` (fin de validité du certificat HTTPS, ms) |
 | POST | `/api/v1/checks` | `{name, url, expected_status, keyword, interval_sec, timeout_ms, enabled}` |
 | PUT | `/api/v1/checks/{id}` | idem |
 | DELETE | `/api/v1/checks/{id}` | |
@@ -46,6 +50,10 @@ Dates en millisecondes Unix. Erreurs : `{"error": "message"}` avec le code HTTP 
 | POST | `/api/v1/devices/test` | `{token?}` : notification de test |
 | GET | `/api/v1/alerts?limit=50` | historique des alertes (30 jours) |
 | GET | `/api/v1/audit?limit=100` | journal des actions (90 jours) |
+| GET / PUT | `/api/v1/settings` | `{cpu, ram, disk, duration_min, quiet_enabled, quiet_start, quiet_end, muted[], image_updates, oracle_watch, cert_days}` |
+| GET | `/api/v1/oracle` | risque de récupération Oracle Always Free : `applicable, risk (low/medium/high/unknown), days, cpu, mem, net, net_mbps, summary` |
+| GET | `/api/v1/images` | dernier résultat de la vérification des images, par conteneur |
+| POST | `/api/v1/images/check` | interroge les registres maintenant |
 
 ## Temps réel
 
@@ -59,6 +67,7 @@ Dates en millisecondes Unix. Erreurs : `{"error": "message"}` avec le code HTTP 
 | `overview` | quand l'état global change |
 | `event` | événement Docker (`start`, `die`, `health_status…`) |
 | `alert` | nouvelle alerte ou résolution |
+| `settings` | réglages modifiés |
 
 Format : `{"type": "...", "data": ...}`. Un ping WebSocket est envoyé toutes les 25 s.
 

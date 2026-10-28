@@ -69,6 +69,9 @@ data class Container(
     val ignored: Boolean = false,
     val self: Boolean = false,
     @SerialName("stopped_by_user") val stoppedByUser: Boolean = false,
+    @SerialName("image_ref") val imageRef: String = "",
+    @SerialName("update_available") val updateAvailable: Boolean = false,
+    val muted: Boolean = false,
 ) {
     val running get() = state == "running"
     val hasProblem get() = problem.isNotEmpty()
@@ -116,6 +119,7 @@ data class CheckResult(
     val status: Int = 0,
     @SerialName("latency_ms") val latencyMs: Long = 0,
     val error: String? = null,
+    @SerialName("cert_expires") val certExpires: Long = 0,
 )
 
 @Serializable
@@ -136,6 +140,7 @@ data class CheckStatus(
     @SerialName("latency_24h") val latency24h: Double = 0.0,
     @SerialName("consecutive_failures") val consecutiveFailures: Int = 0,
     val recent: List<CheckResult> = emptyList(),
+    @SerialName("cert_expires") val certExpires: Long = 0,
 )
 
 @Serializable
@@ -281,3 +286,47 @@ data class DeviceRegistration(val token: String, val name: String)
 
 @Serializable
 data class PushTest(val token: String? = null)
+
+/** Réglages d'alerte modifiables depuis l'appli. */
+@Serializable
+data class AgentSettings(
+    val cpu: Double = 90.0,
+    val ram: Double = 90.0,
+    val disk: Double = 90.0,
+    @SerialName("duration_min") val durationMin: Int = 5,
+    @SerialName("quiet_enabled") val quietEnabled: Boolean = false,
+    @SerialName("quiet_start") val quietStart: String = "23:00",
+    @SerialName("quiet_end") val quietEnd: String = "07:00",
+    val muted: List<String> = emptyList(),
+    @SerialName("image_updates") val imageUpdates: Boolean = true,
+    @SerialName("oracle_watch") val oracleWatch: Boolean = true,
+    @SerialName("cert_days") val certDays: Int = 14,
+)
+
+@Serializable
+data class MuteRequest(val muted: Boolean)
+
+@Serializable
+data class OracleMetric(val value: Double = 0.0, val below: Boolean = false, val applies: Boolean = false, val threshold: Double = 20.0)
+
+@Serializable
+data class OracleReport(
+    val applicable: Boolean = false,
+    val risk: String = "unknown",
+    val days: Double = 0.0,
+    val cpu: OracleMetric = OracleMetric(),
+    val mem: OracleMetric = OracleMetric(),
+    val net: OracleMetric = OracleMetric(),
+    @SerialName("net_mbps") val netMbps: Double = 0.0,
+    val summary: String = "",
+)
+
+@Serializable
+data class TimelineEvent(val ts: Long = 0, val action: String = "", val detail: String = "", val source: String = "docker")
+
+@Serializable
+data class ImageStatus(
+    @SerialName("update_available") val updateAvailable: Boolean = false,
+    @SerialName("checked_at") val checkedAt: Long = 0,
+    val error: String? = null,
+)

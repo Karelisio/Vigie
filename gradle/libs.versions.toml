@@ -21,6 +21,8 @@ serialization = "1.12.0"
 coroutines = "1.11.0"
 vico = "3.3.1"
 junit = "4.13.2"
+biometric = "1.1.0"
+fragment = "1.9.1"
 robolectric = "4.17"
 roborazzi = "1.77.0"
 androidxTest = "1.7.0"
@@ -58,6 +60,8 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 vico-compose-m3 = { module = "com.patrykandpatrick.vico:compose-m3", version.ref = "vico" }
 junit = { module = "junit:junit", version.ref = "junit" }
+androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "biometric" }
+androidx-fragment = { module = "androidx.fragment:fragment-ktx", version.ref = "fragment" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = "roborazzi" }
 roborazzi-compose = { module = "io.github.takahirom.roborazzi:roborazzi-compose", version.ref = "roborazzi" }

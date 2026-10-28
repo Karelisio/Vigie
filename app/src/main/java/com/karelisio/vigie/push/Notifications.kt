@@ -26,6 +26,7 @@ object Notifications {
     const val EXTRA_CONTAINER_NAME = "container_name"
     const val EXTRA_CHECK = "check_id"
     const val EXTRA_SERVER_URL = "server_url"
+    const val EXTRA_RESTART = "restart"
 
     fun createChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -57,7 +58,7 @@ object Notifications {
 
     /** Affiche une alerte reçue de l'agent. */
     @android.annotation.SuppressLint("MissingPermission") // vérifiée par canPost()
-    fun showAlert(context: Context, data: Map<String, String>) {
+    fun showAlert(context: Context, data: Map<String, String>, directActions: Boolean = true) {
         if (!canPost(context)) return
         val resolved = data["resolved"] == "true"
         val severity = data["severity"].orEmpty()
@@ -80,7 +81,7 @@ object Notifications {
             severity == "critical" -> 0xFFC62828.toInt()
             else -> 0xFF006A6A.toInt()
         }
-        val n = NotificationCompat.Builder(context, if (resolved) CHANNEL_RESOLVED else CHANNEL_CRITICAL)
+        val builder = NotificationCompat.Builder(context, if (resolved) CHANNEL_RESOLVED else CHANNEL_CRITICAL)
             .setSmallIcon(R.drawable.ic_stat_vigie)
             .setColor(color)
             .setContentTitle(title)
@@ -94,7 +95,26 @@ object Notifications {
             .setAutoCancel(true)
             .setGroup(GROUP)
             .setContentIntent(pi)
-            .build()
+        val ref = data["container_id"] ?: data["target"]
+        if (!resolved && data["kind"] == "container" && !ref.isNullOrEmpty()) {
+            // Verrou actif : le bouton ouvre l'appli, qui demande l'empreinte avant d'agir.
+            val action = if (directActions) {
+                val i = Intent(context, AlertActionReceiver::class.java).apply {
+                    putExtra(EXTRA_CONTAINER, ref)
+                    putExtra(EXTRA_CONTAINER_NAME, data["target"])
+                    putExtra(EXTRA_SERVER_URL, data["url"])
+                    putExtra(AlertActionReceiver.EXTRA_NOTIFICATION_ID, key.hashCode())
+                }
+                PendingIntent.getBroadcast(context, key.hashCode(), i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            } else {
+                PendingIntent.getActivity(
+                    context, key.hashCode() + 1, Intent(intent).putExtra(EXTRA_RESTART, true),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+            }
+            builder.addAction(R.drawable.ic_restart, "Redémarrer", action)
+        }
+        val n = builder.build()
         // Même identifiant pour l'incident et sa résolution : la résolution remplace l'alerte.
         runCatching { NotificationManagerCompat.from(context).notify(key.hashCode(), n) }
     }

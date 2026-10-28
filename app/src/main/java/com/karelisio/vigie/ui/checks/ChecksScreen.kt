@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.NetworkCheck
 import androidx.compose.material3.AlertDialog
@@ -314,6 +316,7 @@ internal fun CheckCard(
                         color = scheme.onSurfaceVariant,
                         maxLines = 1,
                     )
+                    if (c.certExpires > 0) CertLine(c.certExpires)
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     val last = c.last
@@ -391,5 +394,31 @@ internal fun CheckCard(
                 }
             }
         }
+    }
+}
+
+/** Validité du certificat HTTPS : alerte visuelle sous 14 jours. */
+@Composable
+private fun CertLine(expires: Long) {
+    val days = Math.floorDiv(expires - System.currentTimeMillis(), 86_400_000L)
+    val colors = Vigie.status
+    val color = when {
+        days < 3 -> colors.critical
+        days < 14 -> colors.warn
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+        Icon(Icons.Rounded.Lock, null, Modifier.size(12.dp), tint = color)
+        Spacer(Modifier.width(4.dp))
+        Text(
+            when {
+                days < 0 -> "Certificat expiré"
+                days == 0L -> "Certificat : expire aujourd'hui"
+                days == 1L -> "Certificat : expire demain"
+                else -> "Certificat : $days jours"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+        )
     }
 }

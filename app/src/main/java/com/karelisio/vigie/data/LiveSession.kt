@@ -176,6 +176,10 @@ class LiveSession(
                 val list = VigieJson.decodeFromJsonElement(kotlinx.serialization.builtins.ListSerializer(CheckStatus.serializer()), data)
                 _state.update { it.copy(checks = list, updatedAt = now) }
             }
+            "settings" -> {
+                val s = VigieJson.decodeFromJsonElement(AgentSettings.serializer(), data)
+                _state.update { it.copy(thresholds = Thresholds(s.cpu, s.ram, s.disk)) }
+            }
             "event" -> _events.tryEmit(LiveEvent.Docker(VigieJson.decodeFromJsonElement(DockerEvent.serializer(), data)))
             "alert" -> _events.tryEmit(LiveEvent.NewAlert(VigieJson.decodeFromJsonElement(Alert.serializer(), data)))
         }
