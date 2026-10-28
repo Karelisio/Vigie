@@ -67,7 +67,8 @@ class VigieMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         val data = message.data
         if (data.isEmpty()) return
-        Notifications.showAlert(this, data)
+        val lock = kotlinx.coroutines.runBlocking { appContainer.prefs.current().lockMode }
+        Notifications.showAlert(this, data, directActions = lock == com.karelisio.vigie.data.LockMode.Off)
         // Rafraîchit le widget et la tuile avec l'état réel.
         appContainer.surfaces.refreshNow()
     }

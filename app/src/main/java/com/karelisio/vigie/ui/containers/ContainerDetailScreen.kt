@@ -27,6 +27,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.rounded.HealthAndSafety
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsOff
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.StarBorder
+import androidx.compose.material.icons.rounded.NewReleases
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Stop
@@ -68,6 +73,8 @@ import com.karelisio.vigie.data.ContainerDetail
 import com.karelisio.vigie.data.CtrPoint
 import com.karelisio.vigie.data.Fmt
 import com.karelisio.vigie.data.History
+import com.karelisio.vigie.data.TimelineEvent
+import com.karelisio.vigie.security.LocalActionGuard
 import com.karelisio.vigie.ui.components.ActionTone
 import com.karelisio.vigie.ui.components.ChartPoint
 import com.karelisio.vigie.ui.components.Chip
@@ -99,6 +106,8 @@ class ContainerDetailViewModel : ViewModel() {
     val history = _history.asStateFlow()
     private val _error = MutableStateFlow<String?>(null)
     val error = _error.asStateFlow()
+    private val _events = MutableStateFlow<List<TimelineEvent>?>(null)
+    val events = _events.asStateFlow()
     var ref: String = ""
         private set
 
@@ -117,6 +126,29 @@ class ContainerDetailViewModel : ViewModel() {
         }
     }
 
+    fun loadEvents() {
+        viewModelScope.launch { runCatching { repo.events(ref) }.onSuccess { _events.value = it } }
+    }
+
+    suspend fun setMuted(id: String, muted: Boolean) {
+        repo.mute(id, muted)
+    }
+
+    suspend fun update(id: String, pullOnly: Boolean) {
+        repo.updateContainer(id, pullOnly)
+    }
+
+    suspend fun stack(project: String, action: String) {
+        repo.stackAction(project, action)
+    }
+
+    fun toggleFavorite(name: String, done: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val server = appContainer.servers.active ?: return@launch
+            done(appContainer.prefs.toggleFavorite(server.id, name))
+        }
+    }
+
     fun loadHistory(range: String) {
         viewModelScope.launch { runCatching { repo.containerHistory(ref, range) }.onSuccess { _history.value = it } }
     }
@@ -124,6 +156,7 @@ class ContainerDetailViewModel : ViewModel() {
     suspend fun action(id: String, action: String) {
         repo.action(id, action)
         reload()
+        loadEvents()
     }
 }
 
@@ -138,6 +171,15 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
     val c: Container? = state.containers.firstOrNull { it.id == route.id || it.name == route.id || it.name == route.name }
         ?: detail?.container
     val id = c?.id ?: route.id
+    val events by vm.events.collectAsStateWithLifecycle()
+    val prefs by appContainer.prefs.flow.collectAsStateWithLifecycle(initialValue = null)
+    val activeId by appContainer.servers.activeId.collectAsStateWithLifecycle()
+    val favorite = c != null && c.name in prefs?.favorites?.get(activeId).orEmpty()
+    val snackbar = LocalSnackbar.current
+    val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
+    // Recharge la chronologie à chaque changement d'état (démarrage, arrêt, santé).
+    LaunchedEffect(c?.state, c?.startedAt, c?.health) { if (c != null) vm.loadEvents() }
 
     Column(
         Modifier
@@ -146,7 +188,45 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
             .navigationBarsPadding()
             .padding(bottom = 24.dp),
     ) {
-        Header(c, route, onBack = { nav.popBackStack() })
+        Header(c, route, onBack = { nav.popBackStack() }) {
+            if (c != null) {
+                androidx.compose.material3.IconToggleButton(
+                    checked = favorite,
+                    onCheckedChange = {
+                        haptics.toggle(it)
+                        vm.toggleFavorite(c.name) { on ->
+                            scope.launch {
+                                snackbar.currentSnackbarData?.dismiss()
+                                snackbar.showSnackbar(if (on) "Épinglé en haut de la liste et dans le widget" else "Désépinglé")
+                            }
+                        }
+                    },
+                ) {
+                    Icon(if (favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder, if (favorite) "Désépingler" else "Épingler")
+                }
+                androidx.compose.material3.IconToggleButton(
+                    checked = c.muted,
+                    onCheckedChange = { mute ->
+                        haptics.toggle(!mute)
+                        scope.launch {
+                            val r = runCatching { vm.setMuted(id, mute) }
+                            snackbar.currentSnackbarData?.dismiss()
+                            snackbar.showSnackbar(
+                                r.fold(
+                                    { if (mute) "Plus de notification pour ${c.name}" else "Notifications réactivées pour ${c.name}" },
+                                    { "Échec : ${it.message}" },
+                                ),
+                            )
+                        }
+                    },
+                ) {
+                    Icon(
+                        if (c.muted) Icons.Rounded.NotificationsOff else Icons.Rounded.Notifications,
+                        if (c.muted) "Réactiver les notifications" else "Couper les notifications",
+                    )
+                }
+            }
+        }
         if (c == null) {
             Text(
                 error ?: "Chargement…",
@@ -170,7 +250,32 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
         Spacer(Modifier.height(12.dp))
         if (c.running) StatsCard(c, Modifier.padding(horizontal = 16.dp).cascade(1))
         Spacer(Modifier.height(12.dp))
+        val guard = LocalActionGuard.current
+        val now = com.karelisio.vigie.ui.components.rememberNow(5_000)
+        val job = state.jobs.firstOrNull { it.concerns(c) && (!it.done || now - it.finishedAt < 10 * 60_000) }
+        fun runJob(label: String?, block: suspend () -> Unit) {
+            scope.launch {
+                if (label != null && !guard(label)) return@launch
+                runCatching { block() }.onFailure {
+                    haptics.reject()
+                    snackbar.showSnackbar("Échec : ${it.message}")
+                }
+            }
+        }
+        UpdateCard(
+            c = c,
+            enabled = state.updatesEnabled,
+            busy = state.runningJob != null,
+            job = job,
+            onUpdate = { runJob("Mettre à jour ${c.name}") { vm.update(id, false) } },
+            onPull = { runJob(null) { vm.update(id, true) } },
+            onStack = { runJob("Mettre à jour la stack ${c.project}") { vm.stack(c.project, "update") } },
+            modifier = Modifier.padding(horizontal = 16.dp).cascade(2),
+        )
+        Spacer(Modifier.height(12.dp))
         Charts(history, vm::loadHistory, Modifier.padding(horizontal = 16.dp).cascade(2))
+        Spacer(Modifier.height(12.dp))
+        TimelineCard(events, Modifier.padding(horizontal = 16.dp).cascade(3))
         Spacer(Modifier.height(12.dp))
         detail?.health?.takeIf { it.status.isNotEmpty() }?.let { h ->
             SectionCard(Modifier.padding(horizontal = 16.dp).cascade(3), title = "Healthcheck") {
@@ -198,6 +303,18 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
         }
         SectionCard(Modifier.padding(horizontal = 16.dp).cascade(4), title = "Détails") {
             Info("Image", c.image)
+            if (c.updateAvailable) {
+                Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.NewReleases, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.tertiary)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "Nouvelle version de l'image publiée : redéploie la stack dans Dockhand (Pull + Redeploy).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+            }
+            if (c.muted) Info("Notifications", "Coupées pour ce conteneur")
             if (c.project.isNotEmpty()) Info("Projet compose", c.project + if (c.service.isNotEmpty()) " / ${c.service}" else "")
             Info("Redémarrage auto", when (c.restartPolicy) {
                 "always" -> "Toujours"
@@ -247,7 +364,12 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
 }
 
 @Composable
-internal fun Header(c: Container?, route: ContainerRoute, onBack: () -> Unit) {
+internal fun Header(
+    c: Container?,
+    route: ContainerRoute,
+    onBack: () -> Unit,
+    actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {},
+) {
     val status = Vigie.status
     val vs = c?.visualStatus() ?: "neutral"
     val color by animateColorAsState(status.of(vs), label = "hdr")
@@ -260,6 +382,9 @@ internal fun Header(c: Container?, route: ContainerRoute, onBack: () -> Unit) {
         Column(Modifier.padding(bottom = 24.dp)) {
             Row(Modifier.statusBarsPadding().padding(top = 4.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Retour") }
+                Spacer(Modifier.weight(1f))
+                actions()
+                Spacer(Modifier.width(4.dp))
             }
             Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(contentAlignment = Alignment.Center) {
@@ -304,10 +429,15 @@ internal fun Actions(c: Container, onAction: suspend (String) -> Unit) {
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
+    val guard = LocalActionGuard.current
 
     fun launch(runner: com.karelisio.vigie.ui.components.ActionRunner, action: String) {
-        runner.run({ onAction(action) }) { r ->
-            r.exceptionOrNull()?.let { scope.launch { snackbar.showSnackbar("Échec : ${it.message}") } }
+        val label = mapOf("start" to "Démarrer", "stop" to "Arrêter", "restart" to "Redémarrer")[action]
+        scope.launch {
+            if (!guard("$label ${c.name}")) return@launch
+            runner.run({ onAction(action) }) { r ->
+                r.exceptionOrNull()?.let { scope.launch { snackbar.showSnackbar("Échec : ${it.message}") } }
+            }
         }
     }
 

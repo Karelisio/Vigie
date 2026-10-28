@@ -151,3 +151,21 @@ func (s *Store) CtrHistory(ctx context.Context, name string, r Range) ([]CtrSamp
 
 func round1(v float64) float64 { return float64(int64(v*10+0.5)) / 10 }
 func round2(v float64) float64 { return float64(int64(v*100+0.5)) / 100 }
+
+// SysWindow renvoie les échantillons agrégés (15 min) depuis since, plus l'instant du plus ancien.
+func (s *Store) SysWindow(ctx context.Context, since time.Time) ([]SysSample, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT ts, cpu, mem, disk, rx, tx, load1 FROM sys_agg WHERE ts >= ? ORDER BY ts`, since.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SysSample{}
+	for rows.Next() {
+		var p SysSample
+		if err := rows.Scan(&p.TS, &p.CPU, &p.Mem, &p.Disk, &p.Rx, &p.Tx, &p.Load1); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

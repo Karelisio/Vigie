@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // fuseau horaire (TZ) pour les heures calmes, même sans base système
 
 	"github.com/karelisio/vigie/agent/internal/alerts"
 	"github.com/karelisio/vigie/agent/internal/api"
@@ -21,8 +22,10 @@ import (
 	"github.com/karelisio/vigie/agent/internal/docker"
 	"github.com/karelisio/vigie/agent/internal/monitor"
 	"github.com/karelisio/vigie/agent/internal/qr"
+	"github.com/karelisio/vigie/agent/internal/settings"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/system"
+	"github.com/karelisio/vigie/agent/internal/updater"
 )
 
 var version = "dev"
@@ -31,6 +34,10 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		os.Exit(healthcheck())
+	}
+	// Conteneur auxiliaire lancé par l'agent pour se mettre à jour lui-même.
+	if id := os.Getenv("VIGIE_HELPER_REPLACE"); id != "" {
+		os.Exit(runHelper(log, id))
 	}
 	if err := run(log); err != nil {
 		log.Error("arrêt", "erreur", err)
@@ -63,19 +70,55 @@ func run(log *slog.Logger) error {
 	}
 
 	sys := system.New(cfg.HostProc, cfg.HostSys, cfg.HostRoot)
-	mon := monitor.New(cfg, dk, sys, st, log)
+	set := settings.Load(ctx, st, cfg)
+	mon := monitor.New(cfg, dk, sys, st, set, log)
 	runner := checks.NewRunner(st, log, version, cfg.CheckFailures)
 	runner.Seed(ctx, cfg.ChecksSeed)
 	eng := alerts.New(ctx, cfg, mon, dk, st, log)
 
 	mon.OnSystem = eng.OnSystem
 	mon.OnEvent = eng.OnEvent
+	mon.OnImageUpdates = eng.OnImageUpdates
+	set.OnChange = func(s settings.Settings) {
+		mon.Broadcast("settings", s)
+		mon.Refresh()
+	}
 	runner.OnChange = mon.SetChecks
 	runner.OnResult = eng.OnCheck
 
+	upd := updater.New(dk, log, updater.Hooks{
+		NoteAction:   mon.NoteAction,
+		SetTransient: mon.SetTransient,
+		Publish:      func(j updater.Job) { mon.Broadcast("job", j) },
+		Changed:      mon.AfterUpdate,
+		Finished: func(j updater.Job) {
+			result := "ok"
+			if !j.OK {
+				result = j.Error
+			}
+			st.Audit(context.Background(), "agent", "résultat", j.Target, result+" — "+j.Message, "vigie")
+			if j.Kind != "self" || !j.OK {
+				eng.NotifyJob(j.Title(), j.Message, j.OK)
+			}
+		},
+	}, updater.Options{
+		Enabled:     cfg.AllowUpdates,
+		SelfID:      mon.SelfID(),
+		PruneImages: func() bool { return set.Get().PruneImages },
+		DataDir:     cfg.DataDir,
+		Version:     version,
+	})
+	if r := updater.LastSelfUpdate(cfg.DataDir); r != nil && time.Since(time.UnixMilli(r.TS)) < 10*time.Minute {
+		if r.OK {
+			log.Info("agent mis à jour", "depuis", r.From, "vers", version)
+		} else {
+			log.Warn("échec de la mise à jour de l'agent, ancienne version rétablie", "erreur", r.Error)
+		}
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           api.New(cfg, mon, dk, st, runner, eng, log, version).Handler(),
+		Handler:           api.New(cfg, mon, dk, st, runner, eng, upd, log, version).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
@@ -151,6 +194,36 @@ func orDash(s string) string {
 		return "—"
 	}
 	return s
+}
+
+// runHelper remplace l'ancien agent par un conteneur identique utilisant la nouvelle image.
+func runHelper(log *slog.Logger, oldID string) int {
+	host := os.Getenv("DOCKER_HOST")
+	if host == "" {
+		host = "unix:///var/run/docker.sock"
+	}
+	dk, err := docker.New(host)
+	if err != nil {
+		log.Error("mise à jour de l'agent", "erreur", err)
+		return 1
+	}
+	dataDir := os.Getenv("VIGIE_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "/data"
+	}
+	prune := os.Getenv("VIGIE_HELPER_PRUNE") == "true"
+	m := updater.New(dk, log, updater.Hooks{}, updater.Options{
+		Enabled: true, DataDir: dataDir, Version: version, PruneImages: func() bool { return prune },
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	log.Info("remplacement de l'agent", "ancien", oldID[:min(12, len(oldID))])
+	if err := m.RunHelper(ctx, oldID); err != nil {
+		log.Error("mise à jour de l'agent annulée", "erreur", err)
+		return 1
+	}
+	log.Info("agent remplacé")
+	return 0
 }
 
 // healthcheck est utilisé par le HEALTHCHECK de l'image (pas de curl dans l'image distroless).

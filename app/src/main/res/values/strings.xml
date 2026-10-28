@@ -4,4 +4,10 @@
     <string name="tile_label">Vigie</string>
     <string name="widget_label">Vigie</string>
     <string name="widget_description">État du serveur, CPU et RAM</string>
+    <string name="widget_checks_label">Vigie · Services</string>
+    <string name="widget_checks_description">État des services surveillés</string>
+    <string name="shortcut_containers">Conteneurs</string>
+    <string name="shortcut_containers_long">Voir les conteneurs</string>
+    <string name="shortcut_checks">Services</string>
+    <string name="shortcut_checks_long">Voir les services</string>
 </resources>

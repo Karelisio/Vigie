@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Response
 import okhttp3.WebSocket
@@ -104,7 +105,13 @@ class Repository(
     suspend fun fetchOverview(server: Server): CachedState {
         val ov: Overview = api.get(server, "/api/v1/overview")
         val prev = cache.read(server.id) ?: CachedState()
-        val c = prev.copy(overview = ov, system = ov.system ?: prev.system, updatedAt = System.currentTimeMillis())
+        // Conteneurs (favoris du widget) et services (widget Services) : facultatifs.
+        val containers = runCatching { api.get<List<Container>>(server, "/api/v1/containers") }.getOrNull() ?: prev.containers
+        val checks = runCatching { api.get<List<CheckStatus>>(server, "/api/v1/checks") }.getOrNull() ?: prev.checks
+        val c = prev.copy(
+            overview = ov, system = ov.system ?: prev.system, containers = containers, checks = checks,
+            updatedAt = System.currentTimeMillis(),
+        )
         cache.write(server.id, c)
         onPersisted(server, c)
         return c
@@ -187,7 +194,50 @@ class Repository(
     suspend fun checkHistory(id: Long, range: String, buckets: Int): CheckHistory =
         api.get(requireServer(), "/api/v1/checks/$id/history?range=$range&buckets=$buckets")
 
+    // ---- Réglages, sourdine, chronologie, Oracle, images ----
+
+    suspend fun settings(): AgentSettings = api.get(requireServer(), "/api/v1/settings")
+
+    suspend fun saveSettings(s: AgentSettings): AgentSettings {
+        // Un agent antérieur à 0.3.0 refuse les champs qu'il ne connaît pas.
+        val body = VigieJson.encodeToJsonElement(AgentSettings.serializer(), s).jsonObject
+        val legacy = !live.value.updatesEnabled
+        return api.put(requireServer(), "/api/v1/settings", if (legacy) JsonObject(body - "prune_images") else body)
+    }
+
+    suspend fun mute(id: String, muted: Boolean): AgentSettings {
+        val res: AgentSettings = api.post(requireServer(), "/api/v1/containers/$id/mute", MuteRequest(muted))
+        activeSession.value?.patchContainer(id) { it.copy(muted = muted) }
+        return res
+    }
+
+    suspend fun events(id: String, limit: Int = 80): List<TimelineEvent> =
+        api.get(requireServer(), "/api/v1/containers/$id/events?limit=$limit")
+
+    suspend fun oracle(): OracleReport = api.get(requireServer(), "/api/v1/oracle")
+
+    suspend fun checkImages(): Map<String, ImageStatus> = api.postEmpty(requireServer(), "/api/v1/images/check")
+
     // ---- Alertes, journal, notifications ----
+
+    // ---- Mises à jour d'images et actions de stack ----
+
+    /** Message à afficher dans l'appli (bas de l'écran). */
+    fun notifyLocal(text: String) {
+        activeSession.value?.emit(LiveEvent.Message(text))
+    }
+
+    private fun started(job: AgentJob): AgentJob = job.also { activeSession.value?.patchJob(it) }
+
+    suspend fun updateContainer(id: String, pullOnly: Boolean = false): AgentJob =
+        started(api.post(requireServer(), "/api/v1/containers/$id/update", UpdateRequest(pullOnly)))
+
+    suspend fun stackAction(project: String, action: String): AgentJob =
+        started(api.postEmpty(requireServer(), "/api/v1/stacks/${android.net.Uri.encode(project)}/$action"))
+
+    suspend fun updateAll(): AgentJob = started(api.postEmpty(requireServer(), "/api/v1/updates/apply"))
+
+    suspend fun updateAgent(): AgentJob = started(api.postEmpty(requireServer(), "/api/v1/agent/update"))
 
     suspend fun alerts(limit: Int = 100): List<Alert> = api.get(requireServer(), "/api/v1/alerts?limit=$limit")
 

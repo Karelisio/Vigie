@@ -33,7 +33,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -106,6 +109,12 @@ fun VigieNavHost(nav: NavHostController, start: Any, snackbar: SnackbarHostState
     val showBar = entry?.isTopLevel() == true
     val haptics = rememberHaptics()
     val reduced = LocalReducedMotion.current
+    val live by com.karelisio.vigie.appContainer.repository.live.collectAsState()
+    val job = live.runningJob
+    // Mémorise la dernière opération pour l'animation de sortie du bandeau.
+    var shownJob by remember { mutableStateOf(job) }
+    androidx.compose.runtime.LaunchedEffect(job) { if (job != null) shownJob = job }
+    val showJob = job != null && showBar
 
     CompositionLocalProvider(LocalSnackbar provides snackbar) {
         SharedTransitionLayout(Modifier.fillMaxSize()) {
@@ -131,6 +140,7 @@ fun VigieNavHost(nav: NavHostController, start: Any, snackbar: SnackbarHostState
                         screen<ScanRoute> { ScanScreen(nav) }
                         screen<PermissionsRoute> { PermissionsScreen(nav) }
                         screen<AlertsRoute> { AlertsScreen(nav) }
+                        screen<AlertSettingsRoute> { com.karelisio.vigie.ui.settings.AlertSettingsScreen(nav) }
                         screen<AuditRoute> { AuditScreen(nav) }
                         screen<AboutRoute> { AboutScreen(nav) }
                     }
@@ -158,12 +168,23 @@ fun VigieNavHost(nav: NavHostController, start: Any, snackbar: SnackbarHostState
                             }
                         }
                     }
+                    AnimatedVisibility(
+                        visible = showJob,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(start = 12.dp, end = 12.dp, bottom = 76.dp),
+                        enter = slideInVertically { it / 2 } + fadeIn(),
+                        exit = slideOutVertically { it / 2 } + fadeOut(),
+                    ) {
+                        (job ?: shownJob)?.let { com.karelisio.vigie.ui.components.JobBanner(it) }
+                    }
                     SnackbarHost(
                         snackbar,
                         Modifier
                             .align(Alignment.BottomCenter)
                             .navigationBarsPadding()
-                            .padding(bottom = if (showBar) 72.dp else 0.dp),
+                            .padding(bottom = (if (showBar) 72.dp else 0.dp) + (if (showJob) 84.dp else 0.dp)),
                     )
                 }
             }

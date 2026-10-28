@@ -10,6 +10,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/docker"
 	"github.com/karelisio/vigie/agent/internal/monitor"
+	"github.com/karelisio/vigie/agent/internal/settings"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/system"
 )
@@ -24,7 +25,9 @@ func newEngine(t *testing.T) (*Engine, *store.Store) {
 	cfg := &config.Config{Ignore: map[string]bool{}, AlertCooldown: 30 * time.Minute, RestartLoopCount: 3, RestartLoopWindow: 10 * time.Minute, CheckFailures: 2}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	dk, _ := docker.New("unix:///nonexistent.sock")
-	mon := monitor.New(cfg, dk, system.New("/proc", "/sys", "/"), st, log)
+	cfg.AlertCPU, cfg.AlertRAM, cfg.AlertDisk, cfg.AlertDuration = 90, 90, 90, 5*time.Minute
+	set := settings.Load(context.Background(), st, cfg)
+	mon := monitor.New(cfg, dk, system.New("/proc", "/sys", "/"), st, set, log)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	return New(ctx, cfg, mon, dk, st, log), st

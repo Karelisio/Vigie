@@ -31,6 +31,8 @@ type Status struct {
 	Latency24h          float64             `json:"latency_24h"`
 	ConsecutiveFailures int                 `json:"consecutive_failures"`
 	Recent              []store.CheckResult `json:"recent"`
+	// Expiration du certificat HTTPS la plus récente connue (ms Unix), 0 si inconnue.
+	CertExpires int64 `json:"cert_expires"`
 }
 
 type Runner struct {
@@ -239,6 +241,7 @@ func (r *Runner) Reload(ctx context.Context) error {
 		s := &Status{Check: c, State: "pending", Uptime24h: -1, Uptime7d: -1}
 		if prev != nil {
 			s.Last, s.Recent, s.ConsecutiveFailures = prev.Last, prev.Recent, prev.ConsecutiveFailures
+			s.CertExpires = prev.CertExpires
 			s.Uptime24h, s.Uptime7d, s.Latency24h = prev.Uptime24h, prev.Uptime7d, prev.Latency24h
 		} else {
 			r.fillHistory(ctx, s)
@@ -268,6 +271,11 @@ func (r *Runner) Forget(id int64) {
 func (r *Runner) fillHistory(ctx context.Context, s *Status) {
 	if recent, err := r.st.RecentResults(ctx, s.ID, recentCount); err == nil {
 		s.Recent = recent
+		for _, r := range recent {
+			if r.CertExpires > 0 {
+				s.CertExpires = r.CertExpires
+			}
+		}
 		if n := len(recent); n > 0 {
 			last := recent[n-1]
 			s.Last = &last
@@ -340,6 +348,9 @@ func (r *Runner) execute(ctx context.Context, c store.Check) {
 		return
 	}
 	s.Last = &res
+	if res.CertExpires > 0 {
+		s.CertExpires = res.CertExpires
+	}
 	s.Recent = append(s.Recent, res)
 	if len(s.Recent) > recentCount {
 		s.Recent = s.Recent[len(s.Recent)-recentCount:]
@@ -388,6 +399,9 @@ func (r *Runner) probe(ctx context.Context, c store.Check) store.CheckResult {
 	}
 	defer resp.Body.Close()
 	res.Status = resp.StatusCode
+	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+		res.CertExpires = resp.TLS.PeerCertificates[0].NotAfter.UnixMilli()
+	}
 	var body []byte
 	if c.Keyword != "" {
 		body, _ = io.ReadAll(io.LimitReader(resp.Body, 2<<20))
@@ -399,19 +413,44 @@ func (r *Runner) probe(ctx context.Context, c store.Check) store.CheckResult {
 	case resp.StatusCode != c.ExpectedStatus:
 		res.Error = fmt.Sprintf("code %d (attendu %d)", resp.StatusCode, c.ExpectedStatus)
 	case c.Keyword != "" && !strings.Contains(string(body), c.Keyword):
-		res.Error = fmt.Sprintf("mot-clé « %s » absent", c.Keyword)
+		res.Error = fmt.Sprintf("mot-clé « %s » absent (réponse : %s)", c.Keyword, describeBody(resp.Header.Get("Content-Type"), body))
 	default:
 		res.OK = true
 	}
 	return res
 }
 
+// describeBody résume ce qui a été reçu, pour diagnostiquer un mot-clé absent.
+func describeBody(contentType string, body []byte) string {
+	ct := strings.ToLower(contentType)
+	head := strings.ToLower(strings.TrimSpace(string(body[:min(len(body), 512)])))
+	switch {
+	case len(body) == 0:
+		return "vide"
+	case strings.Contains(ct, "html") || strings.HasPrefix(head, "<!doctype html") || strings.HasPrefix(head, "<html"):
+		if i := strings.Index(head, "<title>"); i >= 0 {
+			if j := strings.Index(head[i:], "</title>"); j > 7 && i+j <= len(body) {
+				return "page HTML « " + strings.TrimSpace(string(body[i+7:i+j])) + " »"
+			}
+		}
+		return "page HTML"
+	case strings.Contains(ct, "json") || strings.HasPrefix(head, "{") || strings.HasPrefix(head, "["):
+		return "JSON sans ce mot-clé"
+	case ct != "":
+		return strings.SplitN(ct, ";", 2)[0]
+	}
+	return "texte"
+}
+
 func describe(err error) string {
 	var dnsErr *net.DNSError
 	var opErr *net.OpError
+	var certErr *tls.CertificateVerificationError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return "délai dépassé"
+	case errors.As(err, &certErr):
+		return "certificat HTTPS invalide ou expiré"
 	case errors.As(err, &dnsErr):
 		return "DNS : " + dnsErr.Err
 	case errors.As(err, &opErr) && opErr.Op == "dial":

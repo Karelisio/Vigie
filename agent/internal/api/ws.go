@@ -73,11 +73,20 @@ func (s *Server) live(w http.ResponseWriter, r *http.Request) {
 	s.mon.Refresh()
 
 	initial := [][]byte{
-		monitor.Encode("hello", map[string]any{"name": s.cfg.ServerName, "version": s.version, "thresholds": s.mon.Thresholds()}),
+		monitor.Encode("hello", map[string]any{
+			"name": s.cfg.ServerName, "version": s.version, "thresholds": s.mon.Thresholds(),
+			"updates_enabled": s.upd.Enabled(), "stacks": true,
+		}),
 		monitor.Encode("overview", s.mon.Overview()),
 		monitor.Encode("system", s.mon.Snapshot()),
 		monitor.Encode("containers", s.mon.Containers()),
 		monitor.Encode("checks", s.mon.Checks()),
+	}
+	// Opération en cours (reconnexion pendant une mise à jour).
+	for _, j := range s.upd.Jobs() {
+		if !j.Done {
+			initial = append(initial, monitor.Encode("job", j))
+		}
 	}
 	for _, b := range initial {
 		if err := write(ctx, c, b); err != nil {

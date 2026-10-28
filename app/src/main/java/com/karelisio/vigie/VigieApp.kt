@@ -33,6 +33,7 @@ class AppContainer(app: Application) {
     }
     val push = Push(app, repository, prefs, scope)
     val updater = Updater(app, api.http, prefs)
+    val lock = com.karelisio.vigie.security.AppLock()
 }
 
 class VigieApp : Application() {
@@ -45,8 +46,15 @@ class VigieApp : Application() {
         container = AppContainer(this)
         Notifications.createChannels(this)
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) = container.repository.setForeground(true)
-            override fun onStop(owner: LifecycleOwner) = container.repository.setForeground(false)
+            override fun onStart(owner: LifecycleOwner) {
+                container.lock.onForeground()
+                container.repository.setForeground(true)
+            }
+
+            override fun onStop(owner: LifecycleOwner) {
+                container.lock.onBackground()
+                container.repository.setForeground(false)
+            }
         })
         container.surfaces.schedulePeriodic()
         container.scope.launch { container.push.syncToken() }

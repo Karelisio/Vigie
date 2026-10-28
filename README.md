@@ -134,7 +134,14 @@ L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et p
 - **Accueil** : radar animé (vert et lent quand tout va bien, rouge et plus rapide en cas de problème, écho pulsé sur le point en défaut), jauges CPU/RAM/disque, réseau en temps réel, historique 24 h / 7 jours.
 - **Conteneurs** : recherche, filtres, glisser vers la droite pour redémarrer et vers la gauche pour arrêter ou démarrer (l'arrêt est confirmé), fiche détaillée avec graphiques, logs en direct avec recherche et niveaux colorés.
 - **Services** : checks HTTP (préréglages AIOStreams, Comet, AIOMetadata), latence, barres de disponibilité sur 24 h, 7 ou 90 jours.
-- **Widget** redimensionnable aux couleurs du système, **tuile** de réglages rapides, **mode hors ligne** avec l'heure de la dernière mise à jour.
+- **Conteneurs épinglés** (appui long) : en tête de liste, dans le grand format du widget et en raccourcis « Logs de … » sur l'icône de l'appli.
+- **Chronologie** par conteneur (plantages, redémarrages, recréations, healthchecks) et badge **MAJ** quand une nouvelle image est publiée.
+- **Notifications** avec bouton « Redémarrer », **heures calmes**, sourdine par conteneur, seuils réglables depuis l'appli (Réglages → Alertes et seuils).
+- **Certificats HTTPS** des services : jours restants, alerte avant expiration (14 jours par défaut).
+- **Oracle Always Free** : carte de risque de récupération pour inactivité (CPU, réseau, mémoire sous 20 % sur 7 jours) et alerte.
+- **Verrouillage** par empreinte, à l'ouverture ou seulement pour les actions (Réglages → Verrouillage).
+- **Mises à jour depuis l'appli** : bouton « Mettre à jour » sur un conteneur, une stack entière (vue « par stack ») ou toutes les images d'un coup, téléchargement seul, et mise à jour de l'agent lui-même (Réglages). Le conteneur est recréé à l'identique (nom, réseaux, volumes, labels compose : Dockhand le voit toujours dans sa stack), avec retour automatique à l'ancienne version s'il ne démarre pas. Progression en direct, notification à la fin si l'appli est fermée.
+- **Deux widgets** (serveur, services) redimensionnables aux couleurs du système, **tuile** de réglages rapides, **raccourcis** Conteneurs/Services, **mode hors ligne** avec l'heure de la dernière mise à jour.
 - Plusieurs serveurs possibles (nom, URL, token), tokens chiffrés sur le téléphone (EncryptedSharedPreferences).
 - Respecte le réglage système « Supprimer les animations ».
 
@@ -150,14 +157,18 @@ Captures d'écran : `./gradlew :app:recordRoborazziDebug` (rendu dans `app/build
 | `VIGIE_PUBLIC_URL` | — | URL publique, intégrée au QR code |
 | `VIGIE_SERVER_NAME` | nom d'hôte | nom affiché dans l'appli |
 | `VIGIE_CHECKS` | — | checks HTTP ajoutés au démarrage : `Nom \| URL \| code \| mot-clé` |
-| `VIGIE_ALERT_CPU` / `_RAM` / `_DISK` | `90` | seuils d'alerte en % |
-| `VIGIE_ALERT_DURATION` | `5m` | durée de dépassement avant alerte CPU/RAM |
+| `VIGIE_ALERT_CPU` / `_RAM` / `_DISK` | `90` | seuils d'alerte en % (valeurs initiales, modifiables ensuite dans l'appli) |
+| `VIGIE_ALERT_DURATION` | `5m` | durée de dépassement avant alerte CPU/RAM (idem) |
 | `VIGIE_ALERT_COOLDOWN` | `30m` | délai minimum entre deux notifications identiques |
 | `VIGIE_RESTART_LOOP_COUNT` / `_WINDOW` | `3` / `10m` | détection des redémarrages en boucle |
 | `VIGIE_CHECK_FAILURES` | `2` | échecs consécutifs avant alerte |
 | `VIGIE_IGNORE` | — | conteneurs à ne jamais signaler (aussi possible avec le label `vigie.ignore=true`) |
 | `VIGIE_RATE_LIMIT` / `_BURST` | `10` / `60` | requêtes par seconde et rafale autorisées par IP |
 | `VIGIE_SHOW_QR` / `VIGIE_QR_INVERT` | `false` | réafficher / inverser le QR code |
+| `VIGIE_ALLOW_UPDATES` | `true` | autoriser les mises à jour d'images depuis l'appli (`false` : lecture et start/stop/restart seulement) |
+| `TZ` | `Europe/Paris` (compose) | fuseau des heures calmes |
+| `VIGIE_ORACLE` | auto | `true`/`false` pour forcer l'analyse Oracle Always Free (détectée via le noyau) |
+| `VIGIE_NET_MBPS` | auto | débit réseau de l'instance, pour le critère réseau d'Oracle |
 | `FCM_SERVICE_ACCOUNT_B64` | — | compte de service Firebase (base64) |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | accepte aussi `tcp://socket-proxy:2375` |
 
@@ -165,10 +176,10 @@ Captures d'écran : `./gradlew :app:recordRoborazziDebug` (rendu dans `app/build
 
 - Toutes les routes (sauf `/healthz`) exigent `Authorization: Bearer <token>`, comparé à temps constant.
 - Limitation de débit par IP ; 10 échecs d'authentification en 10 min → IP bloquée 15 min.
-- Actions possibles : **start, stop, restart**, rien d'autre. L'agent refuse de s'arrêter lui-même.
+- Actions possibles : **start, stop, restart** et **mise à jour d'image**. Une mise à jour ne télécharge que l'image déjà configurée sur le conteneur et le recrée avec sa configuration actuelle : l'appli ne peut fournir ni image ni configuration. L'agent refuse de s'arrêter lui-même.
 - Chaque action est enregistrée dans un journal (date, IP, action, cible, résultat), consultable dans l'appli.
 - Les variables d'environnement des conteneurs ne sont jamais exposées.
 
-Pour aller plus loin, tu peux placer un [socket-proxy](https://github.com/linuxserver/docker-socket-proxy) entre l'agent et Docker (`CONTAINERS=1`, `EVENTS=1`, `INFO=1`, `ALLOW_START=1`, `ALLOW_STOP=1`, `ALLOW_RESTARTS=1`, `POST=0`) et pointer `DOCKER_HOST` dessus.
+Pour aller plus loin, tu peux placer un [socket-proxy](https://github.com/linuxserver/docker-socket-proxy) entre l'agent et Docker (`CONTAINERS=1`, `EVENTS=1`, `INFO=1`, `IMAGES=1`, `ALLOW_START=1`, `ALLOW_STOP=1`, `ALLOW_RESTARTS=1`, `POST=0` avec `VIGIE_ALLOW_UPDATES=false` ; pour les mises à jour depuis l'appli, ajoute `POST=1` et `NETWORKS=1`) et pointer `DOCKER_HOST` dessus.
 
 L'API est décrite dans [`docs/API.md`](docs/API.md).

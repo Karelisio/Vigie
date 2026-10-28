@@ -16,6 +16,8 @@ import (
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/docker"
 	"github.com/karelisio/vigie/agent/internal/monitor"
+	"github.com/karelisio/vigie/agent/internal/oracle"
+	"github.com/karelisio/vigie/agent/internal/settings"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/system"
 )
@@ -36,6 +38,8 @@ type Engine struct {
 	lastFire map[string]time.Time
 	starts   map[string][]time.Time
 	killed   map[string]time.Time
+	set      *settings.Manager
+	quiet    []string // titres des alertes reçues pendant les heures calmes
 }
 
 func New(ctx context.Context, cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, log *slog.Logger) *Engine {
@@ -47,6 +51,7 @@ func New(ctx context.Context, cfg *config.Config, mon *monitor.Monitor, dk *dock
 		lastFire: map[string]time.Time{},
 		starts:   map[string][]time.Time{},
 		killed:   map[string]time.Time{},
+		set:      mon.Settings(),
 	}
 	if len(cfg.FCMServiceAccount) > 0 {
 		f, err := NewFCM(cfg.FCMServiceAccount)
@@ -60,6 +65,7 @@ func New(ctx context.Context, cfg *config.Config, mon *monitor.Monitor, dk *dock
 		log.Info("notifications push désactivées (FCM_SERVICE_ACCOUNT_B64 absent)")
 	}
 	go e.loopWatcher()
+	go e.periodic()
 	return e
 }
 
@@ -68,9 +74,10 @@ func (e *Engine) PushEnabled() bool { return e.fcm != nil }
 // ---- Seuils système ----
 
 func (e *Engine) OnSystem(s system.Snapshot) {
-	e.metric("cpu", "Processeur", s.CPU, e.cfg.AlertCPU, e.cfg.AlertDuration)
-	e.metric("ram", "Mémoire", s.MemPct, e.cfg.AlertRAM, e.cfg.AlertDuration)
-	e.metric("disk", "Disque", s.DiskPct, e.cfg.AlertDisk, time.Minute)
+	set := e.set.Get()
+	e.metric("cpu", "Processeur", s.CPU, set.CPU, set.AlertDuration())
+	e.metric("ram", "Mémoire", s.MemPct, set.RAM, set.AlertDuration())
+	e.metric("disk", "Disque", s.DiskPct, set.Disk, time.Minute)
 }
 
 func (e *Engine) metric(key, label string, v, limit float64, dur time.Duration) {
@@ -113,7 +120,7 @@ func (e *Engine) metric(key, label string, v, limit float64, dur time.Duration) 
 // ---- Conteneurs ----
 
 func (e *Engine) ignored(ev docker.Event) bool {
-	return e.cfg.Ignore[ev.Name()] || strings.EqualFold(ev.Actor.Attributes["vigie.ignore"], "true")
+	return e.cfg.Ignore[ev.Name()] || strings.EqualFold(ev.Actor.Attributes["vigie.ignore"], "true") || e.set.Get().IsMuted(ev.Name())
 }
 
 func (e *Engine) OnEvent(ev docker.Event) {
@@ -311,6 +318,7 @@ func (e *Engine) OnCheck(s checks.Status) {
 	if !s.Enabled || s.Last == nil {
 		return
 	}
+	e.checkCert(s)
 	if !s.Last.OK && s.ConsecutiveFailures >= e.cfg.CheckFailures && !active {
 		e.fire(key, Notification{
 			Kind: "check", Severity: "critical", Target: s.Name, CheckID: s.ID,
@@ -366,6 +374,15 @@ func (e *Engine) dispatch(n Notification, resolved, push bool) {
 	}
 	if err := e.st.AddAlert(e.ctx, a); err != nil {
 		e.log.Warn("enregistrement de l'alerte", "erreur", err)
+	}
+	if push && e.set.Get().InQuietHours(time.Now()) {
+		// Heures calmes : pas de notification, un résumé sera envoyé à la fin.
+		push = false
+		if !resolved {
+			e.mu.Lock()
+			e.quiet = append(e.quiet, n.Title)
+			e.mu.Unlock()
+		}
 	}
 	e.log.Info("alerte", "titre", n.Title, "détail", n.Body, "résolue", resolved, "push", push && e.fcm != nil)
 	e.mon.Broadcast("alert", a)
@@ -467,4 +484,146 @@ func humanDuration(d time.Duration) string {
 		return fmt.Sprintf("%d h %02d", h, m)
 	}
 	return fmt.Sprintf("%d h", h)
+}
+
+// ---- Certificats HTTPS ----
+
+func (e *Engine) checkCert(s checks.Status) {
+	if s.CertExpires == 0 {
+		return
+	}
+	key := "cert:" + strconv.FormatInt(s.ID, 10)
+	limit := e.set.Get().CertDays
+	left := time.Until(time.UnixMilli(s.CertExpires))
+	days := int(left.Hours() / 24)
+	e.mu.Lock()
+	active := e.active[key]
+	e.mu.Unlock()
+	switch {
+	case days < limit && !active:
+		body := fmt.Sprintf("Il expire dans %d jour(s), le %s.", days, time.UnixMilli(s.CertExpires).Format("02/01/2006"))
+		if left < 0 {
+			body = "Il a expiré : les clients refusent la connexion."
+		}
+		e.fire(key, Notification{
+			Kind: "check", Severity: "warning", Target: s.Name, CheckID: s.ID,
+			Title: fmt.Sprintf("Certificat de %s bientôt expiré", s.Name),
+			Body:  body,
+		})
+	case days >= limit && active:
+		e.resolve(key, Notification{
+			Kind: "check", Severity: "info", Target: s.Name, CheckID: s.ID,
+			Title: fmt.Sprintf("Certificat de %s renouvelé", s.Name),
+			Body:  fmt.Sprintf("Valide encore %d jours.", days),
+		})
+	}
+}
+
+// ---- Mises à jour d'images ----
+
+func (e *Engine) OnImageUpdates(names []string) {
+	if !e.set.Get().ImageUpdates {
+		return
+	}
+	var list []string
+	for _, n := range names {
+		if !e.cfg.Ignore[n] && !e.set.Get().IsMuted(n) {
+			list = append(list, n)
+		}
+	}
+	if len(list) == 0 {
+		return
+	}
+	title := "Mise à jour disponible : " + list[0]
+	if len(list) > 1 {
+		title = fmt.Sprintf("%d mises à jour d'images disponibles", len(list))
+	}
+	// Une notification par lot : clé unique, pas de résolution.
+	e.dispatch(Notification{
+		Kind: "image", Severity: "info", Target: strings.Join(list, ", "),
+		Title: title,
+		Body:  "Nouvelle version publiée pour " + strings.Join(list, ", ") + ". Mets à jour depuis l'appli.",
+	}, false, true)
+}
+
+// NotifyJob signale la fin d'une mise à jour lancée depuis l'appli, si celle-ci est fermée
+// (appli ouverte : elle affiche déjà le résultat en direct).
+func (e *Engine) NotifyJob(title, body string, ok bool) {
+	if e.mon.Subscribers() > 0 {
+		return
+	}
+	sev := "critical"
+	if ok {
+		sev = "info"
+	}
+	e.dispatch(Notification{Kind: "job", Severity: sev, Target: title, Title: title, Body: body}, ok, true)
+}
+
+// ---- Tâches périodiques : résumé des heures calmes, risque Oracle ----
+
+func (e *Engine) periodic() {
+	minute := time.NewTicker(time.Minute)
+	defer minute.Stop()
+	nextOracle := time.Now().Add(10 * time.Minute)
+	for {
+		select {
+		case <-e.ctx.Done():
+			return
+		case now := <-minute.C:
+			e.flushQuiet(now)
+			if now.After(nextOracle) {
+				nextOracle = now.Add(time.Hour)
+				e.evaluateOracle()
+			}
+		}
+	}
+}
+
+func (e *Engine) flushQuiet(now time.Time) {
+	if e.set.Get().InQuietHours(now) {
+		return
+	}
+	e.mu.Lock()
+	missed := e.quiet
+	e.quiet = nil
+	e.mu.Unlock()
+	if len(missed) == 0 {
+		return
+	}
+	body := strings.Join(missed, " · ")
+	if len(missed) > 4 {
+		body = strings.Join(missed[:4], " · ") + fmt.Sprintf(" · et %d autre(s)", len(missed)-4)
+	}
+	e.dispatch(Notification{
+		Kind: "summary", Severity: "warning", Target: "heures-calmes",
+		Title: fmt.Sprintf("%d alerte(s) pendant les heures calmes", len(missed)),
+		Body:  body,
+	}, false, true)
+}
+
+func (e *Engine) evaluateOracle() {
+	if !e.set.Get().OracleWatch {
+		return
+	}
+	r, err := oracle.Evaluate(e.ctx, e.st, e.mon.Host.Kernel, e.mon.Host.NumCPU)
+	if err != nil || !r.Applicable || r.Days < 3 {
+		return
+	}
+	key := "oracle"
+	e.mu.Lock()
+	active := e.active[key]
+	e.mu.Unlock()
+	if r.Risk == "high" && !active {
+		e.fire(key, Notification{
+			Kind: "oracle", Severity: "warning", Target: "oracle",
+			Title: "Risque de récupération par Oracle",
+			Body: fmt.Sprintf("Sur %.0f jours : CPU p95 %.0f %%, mémoire p95 %.0f %%, réseau %.1f %%. "+
+				"Oracle peut récupérer une instance Always Free inactive.", r.Days, r.CPU.Value, r.Mem.Value, r.Net.Value),
+		})
+	} else if r.Risk != "high" && active {
+		e.resolve(key, Notification{
+			Kind: "oracle", Severity: "info", Target: "oracle",
+			Title: "Instance de nouveau assez active pour Oracle",
+		})
+	}
 }

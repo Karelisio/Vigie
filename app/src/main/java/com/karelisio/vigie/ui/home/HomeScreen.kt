@@ -114,11 +114,19 @@ class HomeViewModel : ViewModel() {
     val history = _history.asStateFlow()
     private val _refreshing = MutableStateFlow(false)
     val refreshing = _refreshing.asStateFlow()
+    private val _oracle = MutableStateFlow<com.karelisio.vigie.data.OracleReport?>(null)
+    val oracle = _oracle.asStateFlow()
     var range = "24h"
         private set
 
     init {
         loadHistory("24h")
+        loadOracle()
+    }
+
+    /** Rapport Oracle Always Free (ancien agent ou autre hébergeur : rien n'est affiché). */
+    private fun loadOracle() {
+        viewModelScope.launch { _oracle.value = runCatching { repo.oracle() }.getOrNull()?.takeIf { it.applicable } }
     }
 
     fun loadHistory(r: String) {
@@ -131,6 +139,7 @@ class HomeViewModel : ViewModel() {
             _refreshing.value = true
             repo.reconnect()
             runCatching { repo.systemHistory(range) }.onSuccess { _history.value = it }
+            loadOracle()
             delay(900)
             _refreshing.value = false
         }
@@ -139,7 +148,9 @@ class HomeViewModel : ViewModel() {
     fun switchServer(id: String) {
         appContainer.servers.setActive(id)
         _history.value = null
+        _oracle.value = null
         loadHistory(range)
+        loadOracle()
     }
 }
 
@@ -150,6 +161,7 @@ fun HomeScreen(nav: NavHostController, vm: HomeViewModel = viewModel()) {
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val servers by vm.servers.collectAsStateWithLifecycle()
     val activeId by vm.activeId.collectAsStateWithLifecycle()
+    val oracle by vm.oracle.collectAsStateWithLifecycle()
 
     RadarRefreshBox(isRefreshing = refreshing, onRefresh = vm::refresh, modifier = Modifier.fillMaxSize()) {
         HomeContent(
@@ -169,6 +181,7 @@ fun HomeScreen(nav: NavHostController, vm: HomeViewModel = viewModel()) {
                 }
             },
             onContainers = { nav.navigateTab(ContainersRoute) },
+            oracle = oracle,
         )
     }
 }
@@ -186,6 +199,7 @@ internal fun HomeContent(
     onRange: (String) -> Unit,
     onIssue: (Issue) -> Unit,
     onContainers: () -> Unit,
+    oracle: com.karelisio.vigie.data.OracleReport? = null,
 ) {
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 96.dp
     LazyColumn(
@@ -213,6 +227,7 @@ internal fun HomeContent(
             HistoryCard(history, range, state, onRange = onRange, modifier = Modifier.padding(horizontal = 16.dp).cascade(3))
         }
         item(key = "containers") { ContainersSummary(state, Modifier.padding(horizontal = 16.dp).cascade(4), onContainers) }
+        if (oracle != null) item(key = "oracle") { OracleCard(oracle, Modifier.padding(horizontal = 16.dp).animateItem().cascade(5)) }
     }
 }
 

@@ -278,3 +278,14 @@ func (c *Client) Version(ctx context.Context) (*Version, error) {
 	}
 	return &v, nil
 }
+
+// ImageInspect renvoie les digests de dépôt d'une image locale (lecture seule).
+func (c *Client) ImageInspect(ctx context.Context, id string) ([]string, error) {
+	var out struct {
+		RepoDigests []string `json:"RepoDigests"`
+	}
+	if err := c.getJSON(ctx, "/images/"+url.PathEscape(id)+"/json", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.RepoDigests, nil
+}

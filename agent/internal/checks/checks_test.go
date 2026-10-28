@@ -21,3 +21,20 @@ func TestValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestDescribeBody(t *testing.T) {
+	cases := []struct {
+		ct, body, want string
+	}{
+		{"text/html; charset=utf-8", "<!DOCTYPE html><html><head><title>AIOMetadata</title></head>", "page HTML « AIOMetadata »"},
+		{"", "<html><body>x</body></html>", "page HTML"},
+		{"application/json", `{"name":"x"}`, "JSON sans ce mot-clé"},
+		{"", "", "vide"},
+		{"text/plain", "ok", "text/plain"},
+	}
+	for _, c := range cases {
+		if got := describeBody(c.ct, []byte(c.body)); got != c.want {
+			t.Errorf("%q : %q, attendu %q", c.body, got, c.want)
+		}
+	}
+}

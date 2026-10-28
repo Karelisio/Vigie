@@ -75,6 +75,17 @@ fun SectionCard(
     }
 }
 
+/** Intertitre de liste. */
+@Composable
+fun SectionTitle(title: String, modifier: Modifier = Modifier) {
+    Text(
+        title,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = modifier.padding(top = 8.dp, bottom = 2.dp),
+    )
+}
+
 /** Instant d'ouverture de l'écran courant (fourni par la navigation). */
 val LocalScreenOpenedAt = androidx.compose.runtime.compositionLocalOf { 0L }
 

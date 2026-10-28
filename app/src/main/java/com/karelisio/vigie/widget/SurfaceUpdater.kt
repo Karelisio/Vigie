@@ -37,6 +37,7 @@ class SurfaceUpdater(private val context: Context, private val scope: CoroutineS
     fun updateSurfaces() {
         scope.launch {
             runCatching { VigieWidget().updateAll(context) }
+            runCatching { ChecksWidget().updateAll(context) }
             runCatching { TileService.requestListeningState(context, ComponentName(context, VigieTileService::class.java)) }
         }
     }

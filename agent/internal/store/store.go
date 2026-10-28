@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -61,7 +62,16 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 CREATE INDEX IF NOT EXISTS audit_ts ON audit (ts);
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, name TEXT NOT NULL, action TEXT NOT NULL, detail TEXT
+);
+CREATE INDEX IF NOT EXISTS events_name_ts ON events (name, ts);
 `
+
+// migrations ajoute les colonnes apparues après la première version (erreurs « déjà présente » ignorées).
+var migrations = []string{
+	`ALTER TABLE check_results ADD COLUMN cert_expires INTEGER`,
+}
 
 func Open(dir string) (*Store, error) {
 	dsn := "file:" + filepath.Join(dir, "vigie.db") +
@@ -74,6 +84,12 @@ func Open(dir string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("schéma SQLite : %w", err)
+	}
+	for _, m := range migrations {
+		if _, err := db.Exec(m); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("migration SQLite : %w", err)
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -220,6 +236,7 @@ func (s *Store) Cleanup(ctx context.Context) error {
 		{`DELETE FROM check_daily WHERE day < ?`, ms(91 * day)},
 		{`DELETE FROM alerts WHERE ts < ?`, ms(30 * day)},
 		{`DELETE FROM audit WHERE ts < ?`, ms(90 * day)},
+		{`DELETE FROM events WHERE ts < ?`, ms(30 * day)},
 	}
 	for _, st := range stmts {
 		if _, err := s.db.ExecContext(ctx, st.q, st.arg); err != nil {
@@ -228,4 +245,39 @@ func (s *Store) Cleanup(ctx context.Context) error {
 	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM check_results WHERE check_id NOT IN (SELECT id FROM checks)`)
 	return err
+}
+
+// ---- Chronologie des conteneurs ----
+
+type Event struct {
+	TS     int64  `json:"ts"`
+	Action string `json:"action"`
+	Detail string `json:"detail,omitempty"`
+	Source string `json:"source"` // docker ou vigie (action depuis l'appli)
+}
+
+func (s *Store) AddEvent(ctx context.Context, name, action, detail string, ts int64) {
+	_, _ = s.db.ExecContext(ctx, `INSERT INTO events (ts, name, action, detail) VALUES (?, ?, ?, ?)`, ts, name, action, detail)
+}
+
+// Events renvoie la chronologie d'un conteneur (événements Docker et actions via Vigie), du plus récent au plus ancien.
+func (s *Store) Events(ctx context.Context, name string, limit int) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ts, action, COALESCE(detail, ''), 'docker' FROM events WHERE name = ?
+		UNION ALL
+		SELECT ts, action, result, 'vigie' FROM audit WHERE target = ? AND action IN ('start', 'stop', 'restart')
+		ORDER BY 1 DESC LIMIT ?`, name, name, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Event{}
+	for rows.Next() {
+		var e Event
+		if err := rows.Scan(&e.TS, &e.Action, &e.Detail, &e.Source); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

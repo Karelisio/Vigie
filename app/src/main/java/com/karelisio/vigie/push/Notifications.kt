@@ -26,6 +26,8 @@ object Notifications {
     const val EXTRA_CONTAINER_NAME = "container_name"
     const val EXTRA_CHECK = "check_id"
     const val EXTRA_SERVER_URL = "server_url"
+    /** Action demandée depuis une notification : restart, update ou update_all. */
+    const val EXTRA_ACTION = "action"
 
     fun createChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -57,7 +59,7 @@ object Notifications {
 
     /** Affiche une alerte reçue de l'agent. */
     @android.annotation.SuppressLint("MissingPermission") // vérifiée par canPost()
-    fun showAlert(context: Context, data: Map<String, String>) {
+    fun showAlert(context: Context, data: Map<String, String>, directActions: Boolean = true) {
         if (!canPost(context)) return
         val resolved = data["resolved"] == "true"
         val severity = data["severity"].orEmpty()
@@ -71,6 +73,7 @@ object Notifications {
             if (data["kind"] == "container") putExtra(EXTRA_CONTAINER_NAME, data["target"])
             data["check_id"]?.let { putExtra(EXTRA_CHECK, it) }
             data["url"]?.let { putExtra(EXTRA_SERVER_URL, it) }
+            if (data["kind"] == "image") setData(android.net.Uri.parse("vigie://open/containers"))
         }
         val pi = PendingIntent.getActivity(
             context, key.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
@@ -80,7 +83,7 @@ object Notifications {
             severity == "critical" -> 0xFFC62828.toInt()
             else -> 0xFF006A6A.toInt()
         }
-        val n = NotificationCompat.Builder(context, if (resolved) CHANNEL_RESOLVED else CHANNEL_CRITICAL)
+        val builder = NotificationCompat.Builder(context, if (resolved) CHANNEL_RESOLVED else CHANNEL_CRITICAL)
             .setSmallIcon(R.drawable.ic_stat_vigie)
             .setColor(color)
             .setContentTitle(title)
@@ -94,7 +97,37 @@ object Notifications {
             .setAutoCancel(true)
             .setGroup(GROUP)
             .setContentIntent(pi)
-            .build()
+        val target = data["target"].orEmpty()
+        val button: Triple<String, String, Int>? = when {
+            resolved -> null
+            data["kind"] == "container" && target.isNotEmpty() -> Triple("restart", "Redémarrer", R.drawable.ic_restart)
+            data["kind"] == "image" && target.contains(", ") -> Triple("update_all", "Tout mettre à jour", R.drawable.ic_update)
+            data["kind"] == "image" && target.isNotEmpty() -> Triple("update", "Mettre à jour", R.drawable.ic_update)
+            else -> null
+        }
+        if (button != null) {
+            val (action, label, icon) = button
+            val ref = if (data["kind"] == "container") data["container_id"] ?: target else target
+            // Verrou actif : le bouton ouvre l'appli, qui demande confirmation et empreinte avant d'agir.
+            val pending = if (directActions) {
+                val i = Intent(context, AlertActionReceiver::class.java).apply {
+                    putExtra(EXTRA_ACTION, action)
+                    putExtra(EXTRA_CONTAINER, ref)
+                    putExtra(EXTRA_CONTAINER_NAME, target)
+                    putExtra(EXTRA_SERVER_URL, data["url"])
+                    putExtra(AlertActionReceiver.EXTRA_NOTIFICATION_ID, key.hashCode())
+                }
+                PendingIntent.getBroadcast(context, key.hashCode(), i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            } else {
+                val i = Intent(intent).apply {
+                    putExtra(EXTRA_ACTION, action)
+                    if (action != "update_all") putExtra(EXTRA_CONTAINER_NAME, target)
+                }
+                PendingIntent.getActivity(context, key.hashCode() + 1, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            }
+            builder.addAction(icon, label, pending)
+        }
+        val n = builder.build()
         // Même identifiant pour l'incident et sa résolution : la résolution remplace l'alerte.
         runCatching { NotificationManagerCompat.from(context).notify(key.hashCode(), n) }
     }

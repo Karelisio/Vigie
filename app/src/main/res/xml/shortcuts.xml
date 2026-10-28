@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="containers"
+        android:enabled="true"
+        android:icon="@drawable/ic_sc_containers"
+        android:shortcutShortLabel="@string/shortcut_containers"
+        android:shortcutLongLabel="@string/shortcut_containers_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.karelisio.vigie"
+            android:targetClass="com.karelisio.vigie.MainActivity"
+            android:data="vigie://open/containers" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="checks"
+        android:enabled="true"
+        android:icon="@drawable/ic_sc_checks"
+        android:shortcutShortLabel="@string/shortcut_checks"
+        android:shortcutLongLabel="@string/shortcut_checks_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.karelisio.vigie"
+            android:targetClass="com.karelisio.vigie.MainActivity"
+            android:data="vigie://open/checks" />
+    </shortcut>
+</shortcuts>

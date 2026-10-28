@@ -18,7 +18,9 @@ import (
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/docker"
 	"github.com/karelisio/vigie/agent/internal/monitor"
+	"github.com/karelisio/vigie/agent/internal/oracle"
 	"github.com/karelisio/vigie/agent/internal/store"
+	"github.com/karelisio/vigie/agent/internal/updater"
 )
 
 type Server struct {
@@ -28,6 +30,7 @@ type Server struct {
 	st        *store.Store
 	runner    *checks.Runner
 	alerts    *alerts.Engine
+	upd       *updater.Manager
 	log       *slog.Logger
 	version   string
 	started   time.Time
@@ -35,9 +38,9 @@ type Server struct {
 	limiter   *limiter
 }
 
-func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, log *slog.Logger, version string) *Server {
+func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, upd *updater.Manager, log *slog.Logger, version string) *Server {
 	return &Server{
-		cfg: cfg, mon: mon, dk: dk, st: st, runner: runner, alerts: al, log: log, version: version,
+		cfg: cfg, mon: mon, dk: dk, st: st, runner: runner, alerts: al, upd: upd, log: log, version: version,
 		started:   time.Now(),
 		tokenHash: sha256.Sum256([]byte(cfg.Token)),
 		limiter:   newLimiter(cfg.RateLimit, cfg.RateBurst),
@@ -61,6 +64,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/containers/{id}/start", s.action("start"))
 	mux.HandleFunc("POST /api/v1/containers/{id}/stop", s.action("stop"))
 	mux.HandleFunc("POST /api/v1/containers/{id}/restart", s.action("restart"))
+	mux.HandleFunc("POST /api/v1/containers/{id}/update", s.updateContainer)
+	mux.HandleFunc("POST /api/v1/stacks/{project}/{action}", s.stackAction)
+	mux.HandleFunc("POST /api/v1/updates/apply", s.updateAll)
+	mux.HandleFunc("POST /api/v1/agent/update", s.updateAgent)
+	mux.HandleFunc("GET /api/v1/jobs", s.jobs)
 
 	mux.HandleFunc("GET /api/v1/checks", s.listChecks)
 	mux.HandleFunc("POST /api/v1/checks", s.createCheck)
@@ -72,6 +80,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/devices", s.registerDevice)
 	mux.HandleFunc("DELETE /api/v1/devices", s.unregisterDevice)
 	mux.HandleFunc("POST /api/v1/devices/test", s.testPush)
+
+	mux.HandleFunc("GET /api/v1/containers/{id}/events", s.containerEvents)
+	mux.HandleFunc("POST /api/v1/containers/{id}/mute", s.muteContainer)
+
+	mux.HandleFunc("GET /api/v1/settings", s.getSettings)
+	mux.HandleFunc("PUT /api/v1/settings", s.putSettings)
+	mux.HandleFunc("GET /api/v1/oracle", s.oracleReport)
+	mux.HandleFunc("GET /api/v1/images", s.imageUpdates)
+	mux.HandleFunc("POST /api/v1/images/check", s.checkImages)
 
 	mux.HandleFunc("GET /api/v1/alerts", s.listAlerts)
 	mux.HandleFunc("GET /api/v1/audit", s.audit)
@@ -122,14 +139,16 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	dv, _ = s.dk.Version(ctx)
 	out := map[string]any{
-		"name":          s.cfg.ServerName,
-		"version":       s.version,
-		"api":           1,
-		"host":          s.mon.Host,
-		"agent_started": s.started.UnixMilli(),
-		"thresholds":    s.mon.Thresholds(),
-		"push_enabled":  s.alerts.PushEnabled(),
-		"public_url":    s.cfg.PublicURL,
+		"name":             s.cfg.ServerName,
+		"version":          s.version,
+		"api":              1,
+		"host":             s.mon.Host,
+		"agent_started":    s.started.UnixMilli(),
+		"thresholds":       s.mon.Thresholds(),
+		"push_enabled":     s.alerts.PushEnabled(),
+		"public_url":       s.cfg.PublicURL,
+		"updates_enabled":  s.upd.Enabled(),
+		"last_self_update": updater.LastSelfUpdate(s.cfg.DataDir),
 	}
 	if dv != nil {
 		out["docker"] = dv
@@ -539,4 +558,87 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+// ---- Chronologie, sourdine ----
+
+func (s *Server) containerEvents(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.find(w, r)
+	if !ok {
+		return
+	}
+	list, err := s.st.Events(r.Context(), c.Name, queryInt(r, "limit", 80, 1, 500))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) muteContainer(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.find(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Muted bool `json:"muted"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON invalide : "+err.Error())
+		return
+	}
+	set, err := s.mon.Settings().SetMuted(r.Context(), c.Name, in.Muted)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	action := "unmute"
+	if in.Muted {
+		action = "mute"
+	}
+	s.st.Audit(r.Context(), s.clientIP(r), action, c.Name, "ok", r.UserAgent())
+	writeJSON(w, http.StatusOK, set)
+}
+
+// ---- Réglages ----
+
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.mon.Settings().Get())
+}
+
+func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
+	// Les champs absents gardent leur valeur actuelle (appli plus ancienne que l'agent).
+	in := s.mon.Settings().Get()
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON invalide : "+err.Error())
+		return
+	}
+	out, err := s.mon.Settings().Update(r.Context(), in)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.st.Audit(r.Context(), s.clientIP(r), "settings", "alertes", "ok", r.UserAgent())
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ---- Oracle, images ----
+
+func (s *Server) oracleReport(w http.ResponseWriter, r *http.Request) {
+	rep, err := oracle.Evaluate(r.Context(), s.st, s.mon.Host.Kernel, s.mon.Host.NumCPU)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rep)
+}
+
+func (s *Server) imageUpdates(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.mon.ImageUpdates())
+}
+
+func (s *Server) checkImages(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	writeJSON(w, http.StatusOK, s.mon.CheckImages(ctx, true))
 }
