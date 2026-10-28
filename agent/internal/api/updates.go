@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/karelisio/vigie/agent/internal/monitor"
 	"github.com/karelisio/vigie/agent/internal/updater"
@@ -58,7 +59,7 @@ func (s *Server) stackAction(w http.ResponseWriter, r *http.Request) {
 	project, action := r.PathValue("project"), r.PathValue("action")
 	var members []updater.Member
 	for _, c := range s.mon.Containers() {
-		if c.Project == project {
+		if c.Project == project && !leftover(c.Name) {
 			members = append(members, member(c))
 		}
 	}
@@ -73,7 +74,7 @@ func (s *Server) stackAction(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateAll(w http.ResponseWriter, r *http.Request) {
 	var members []updater.Member
 	for _, c := range s.mon.Containers() {
-		if c.UpdateAvailable {
+		if c.UpdateAvailable && !leftover(c.Name) {
 			members = append(members, member(c))
 		}
 	}
@@ -99,3 +100,7 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.upd.Jobs())
 }
+
+// leftover : ancienne version renommée pendant une mise à jour, encore visible quelques secondes dans
+// la liste du moniteur après sa suppression ; elle ne fait pas partie de la stack.
+func leftover(name string) bool { return strings.Contains(name, "-vigie-old-") }

@@ -2,6 +2,19 @@
 
 Le workflow de release publie la section correspondant au tag (`## [X.Y.Z]`).
 
+## [0.6.0]
+
+- Retour à la version précédente d'un conteneur en un bouton après une mise à jour (fiche, chronologie, notification de surconsommation) ; la version écartée n'est plus réinstallée la nuit.
+- Restauration d'une sauvegarde depuis l'appli, avec copie de sécurité avant et « Annuler la dernière restauration ».
+- Stockage : prévision « disque plein dans ~N jours », taille et croissance des volumes, alertes.
+- Sécurité du serveur : failles connues dans les images (base OSV) avec la version corrigée, ports ouverts sur Internet (et ceux qui contournent Pangolin, test depuis le téléphone), connexions SSH (tentatives, pays, alerte à chaque connexion réussie).
+- Debrid : état du service vérifié toutes les 5 min (en ligne, ralenti, en panne), disponibilité sur 24 h, historique des pannes et alerte quand il ne répond plus.
+- Noms de domaine : date d'expiration et alerte 30 jours avant.
+- Page d'état publique à partager : services et conteneurs choisis, disponibilité sur 90 jours, sans rien exposer d'autre.
+- Progression des opérations en direct dans la notification (Live Update sur Android 16), même appli fermée.
+- Montre Wear OS : tuile, complication et écran d'état (APK séparé dans la release).
+- Agent : à mettre à jour depuis l'appli (Réglages → Mettre à jour l'agent). Pour les connexions SSH, ajouter `group_add: ["4"]` au compose (voir README).
+
 ## [0.5.0]
 
 - Surveillance depuis le téléphone : l'appli vérifie toutes les 15 min que chaque serveur répond et prévient s'il ne répond plus (VPS ou agent tombé), avec la cause, puis quand il répond de nouveau.
