@@ -17,6 +17,8 @@ import (
 	"github.com/karelisio/vigie/agent/internal/checks"
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/docker"
+	"github.com/karelisio/vigie/agent/internal/images"
+	"github.com/karelisio/vigie/agent/internal/settings"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/system"
 )
@@ -49,6 +51,10 @@ type Container struct {
 	Ignored       bool     `json:"ignored"`
 	Self          bool     `json:"self"`
 	StoppedByUser bool     `json:"stopped_by_user"`
+	// Référence de l'image utilisée à la création (ex. ghcr.io/x/y:latest).
+	ImageRef        string `json:"image_ref"`
+	UpdateAvailable bool   `json:"update_available"`
+	Muted           bool   `json:"muted"`
 }
 
 type Issue struct {
@@ -134,16 +140,25 @@ type Monitor struct {
 	sysAcc     acc
 	ctrAcc     map[string]*ctrAcc
 	dockerErr  string
+	set        *settings.Manager
+	img        *images.Checker
+	updates    map[string]images.Status // nom du conteneur → état de son image
+	digests    map[string][]string      // ID d'image → RepoDigests
 
 	refresh chan struct{}
 
 	// Points d'extension utilisés par le moteur d'alertes.
-	OnSystem func(system.Snapshot)
-	OnEvent  func(docker.Event)
+	OnSystem       func(system.Snapshot)
+	OnEvent        func(docker.Event)
+	OnImageUpdates func(names []string)
 }
 
-func New(cfg *config.Config, dk *docker.Client, sys *system.Collector, st *store.Store, log *slog.Logger) *Monitor {
+func New(cfg *config.Config, dk *docker.Client, sys *system.Collector, st *store.Store, set *settings.Manager, log *slog.Logger) *Monitor {
 	m := &Monitor{
+		set:     set,
+		img:     images.NewChecker(log),
+		updates: map[string]images.Status{},
+		digests: map[string][]string{},
 		cfg:     cfg,
 		dk:      dk,
 		sys:     sys,
@@ -162,6 +177,10 @@ func New(cfg *config.Config, dk *docker.Client, sys *system.Collector, st *store
 		cfg.ServerName = m.Host.Hostname
 	}
 	_ = json.Unmarshal([]byte(st.Get(context.Background(), "stopped_by_user")), &m.stopped)
+	_ = json.Unmarshal([]byte(st.Get(context.Background(), "image_updates")), &m.updates)
+	if m.updates == nil {
+		m.updates = map[string]images.Status{}
+	}
 	if m.stopped == nil {
 		m.stopped = map[string]bool{}
 	}
@@ -187,7 +206,8 @@ func detectSelfID() string {
 func (m *Monitor) SelfID() string { return m.selfID }
 
 func (m *Monitor) Thresholds() Thresholds {
-	return Thresholds{CPU: m.cfg.AlertCPU, RAM: m.cfg.AlertRAM, Disk: m.cfg.AlertDisk}
+	s := m.set.Get()
+	return Thresholds{CPU: s.CPU, RAM: s.RAM, Disk: s.Disk}
 }
 
 // Run lance les boucles de collecte jusqu'à l'annulation du contexte.
@@ -204,6 +224,7 @@ func (m *Monitor) Run(ctx context.Context) {
 	go m.eventsLoop(ctx)
 	go m.containersLoop(ctx)
 	go m.minuteLoop(ctx)
+	go m.imagesLoop(ctx)
 
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
@@ -377,6 +398,13 @@ func (m *Monitor) buildContainer(ctx context.Context, c docker.Container) Contai
 		}
 	}
 	ci.StoppedByUser = stoppedByUser && c.State != "running"
+	ci.Muted = m.set.Get().IsMuted(name)
+	if entry.in != nil {
+		ci.ImageRef = entry.in.Config.Image
+	}
+	m.mu.RLock()
+	ci.UpdateAvailable = m.updates[name].UpdateAvailable
+	m.mu.RUnlock()
 
 	if c.State == "running" {
 		if st, err := m.dk.Stats(ctx, c.ID); err == nil {
@@ -466,6 +494,7 @@ func (m *Monitor) eventsLoop(ctx context.Context) {
 					return
 				}
 			}
+			m.recordEvent(e)
 			m.hub.broadcast("event", map[string]any{
 				"action": e.Action, "id": e.Actor.ID, "name": e.Name(), "ts": e.Time * 1000,
 				"exit_code": e.Actor.Attributes["exitCode"],
@@ -597,9 +626,10 @@ func (m *Monitor) computeOverview() Overview {
 			add(Issue{Kind: "system", Severity: "warning", Target: name, Message: fmt.Sprintf("%s à %.0f %%", label, v)})
 		}
 	}
-	metric("cpu", "Processeur", s.CPU, m.cfg.AlertCPU)
-	metric("ram", "Mémoire", s.MemPct, m.cfg.AlertRAM)
-	metric("disk", "Disque", s.DiskPct, m.cfg.AlertDisk)
+	th := m.set.Get()
+	metric("cpu", "Processeur", s.CPU, th.CPU)
+	metric("ram", "Mémoire", s.MemPct, th.RAM)
+	metric("disk", "Disque", s.DiskPct, th.Disk)
 
 	for _, c := range m.containers {
 		ov.Containers.Total++
@@ -655,13 +685,13 @@ func (m *Monitor) Snapshot() system.Snapshot {
 func (m *Monitor) Containers() []Container {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append([]Container(nil), m.containers...)
+	return append([]Container{}, m.containers...)
 }
 
 func (m *Monitor) Checks() []checks.Status {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append([]checks.Status(nil), m.checks...)
+	return append([]checks.Status{}, m.checks...)
 }
 
 func (m *Monitor) Overview() Overview {
@@ -730,3 +760,122 @@ func parseTime(s string) int64 {
 
 func round1(v float64) float64 { return float64(int64(v*10+0.5)) / 10 }
 func round2(v float64) float64 { return float64(int64(v*100+0.5)) / 100 }
+
+// recordEvent conserve les événements utiles pour la chronologie d'un conteneur.
+func (m *Monitor) recordEvent(e docker.Event) {
+	action, detail := e.Action, ""
+	switch {
+	case action == "die":
+		detail = e.Actor.Attributes["exitCode"]
+	case strings.HasPrefix(action, "health_status"):
+		detail = strings.TrimSpace(strings.TrimPrefix(action, "health_status:"))
+		action = "health"
+	case action == "start", action == "stop", action == "restart", action == "oom",
+		action == "create", action == "destroy", action == "pause", action == "unpause":
+	default:
+		return
+	}
+	ts := e.TimeNano / int64(time.Millisecond)
+	if ts == 0 {
+		ts = time.Now().UnixMilli()
+	}
+	m.st.AddEvent(context.Background(), e.Name(), action, detail, ts)
+}
+
+// ---- Mises à jour d'images ----
+
+func (m *Monitor) imagesLoop(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(90 * time.Second):
+	}
+	for {
+		m.CheckImages(ctx, false)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(6 * time.Hour):
+		}
+	}
+}
+
+// CheckImages compare l'image de chaque conteneur à la dernière publiée sur son registre.
+func (m *Monitor) CheckImages(ctx context.Context, force bool) map[string]images.Status {
+	type item struct{ name, ref, imageID string }
+	var items []item
+	m.mu.RLock()
+	for _, c := range m.containers {
+		if e, ok := m.inspect[c.ID]; ok && e.in != nil {
+			items = append(items, item{c.Name, e.in.Config.Image, e.in.Image})
+		}
+	}
+	m.mu.RUnlock()
+
+	results := map[string]images.Status{}
+	for _, it := range items {
+		if ctx.Err() != nil {
+			return nil
+		}
+		st := images.Status{CheckedAt: time.Now().UnixMilli()}
+		if _, ok := images.Parse(it.ref); !ok {
+			continue
+		}
+		remote, err := m.img.RemoteDigest(ctx, it.ref, force)
+		if err != nil {
+			st.Error = err.Error()
+		} else if digests, err := m.repoDigests(ctx, it.imageID); err != nil {
+			st.Error = err.Error()
+		} else if upd, known := images.UpdateAvailable(it.ref, remote, digests); known {
+			st.UpdateAvailable = upd
+		}
+		results[it.name] = st
+	}
+
+	var newly []string
+	m.mu.Lock()
+	for name, st := range results {
+		if st.UpdateAvailable && !m.updates[name].UpdateAvailable {
+			newly = append(newly, name)
+		}
+	}
+	m.updates = results
+	b, _ := json.Marshal(results)
+	m.mu.Unlock()
+	_ = m.st.Set(context.Background(), "image_updates", string(b))
+	sort.Strings(newly)
+	if len(newly) > 0 && m.OnImageUpdates != nil {
+		m.OnImageUpdates(newly)
+	}
+	m.Refresh()
+	return results
+}
+
+func (m *Monitor) repoDigests(ctx context.Context, imageID string) ([]string, error) {
+	m.mu.RLock()
+	d, ok := m.digests[imageID]
+	m.mu.RUnlock()
+	if ok {
+		return d, nil
+	}
+	d, err := m.dk.ImageInspect(ctx, imageID)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	m.digests[imageID] = d
+	m.mu.Unlock()
+	return d, nil
+}
+
+func (m *Monitor) ImageUpdates() map[string]images.Status {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[string]images.Status, len(m.updates))
+	for k, v := range m.updates {
+		out[k] = v
+	}
+	return out
+}
+
+func (m *Monitor) Settings() *settings.Manager { return m.set }

@@ -18,6 +18,8 @@ import (
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/docker"
 	"github.com/karelisio/vigie/agent/internal/monitor"
+	"github.com/karelisio/vigie/agent/internal/oracle"
+	"github.com/karelisio/vigie/agent/internal/settings"
 	"github.com/karelisio/vigie/agent/internal/store"
 )
 
@@ -72,6 +74,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/devices", s.registerDevice)
 	mux.HandleFunc("DELETE /api/v1/devices", s.unregisterDevice)
 	mux.HandleFunc("POST /api/v1/devices/test", s.testPush)
+
+	mux.HandleFunc("GET /api/v1/containers/{id}/events", s.containerEvents)
+	mux.HandleFunc("POST /api/v1/containers/{id}/mute", s.muteContainer)
+
+	mux.HandleFunc("GET /api/v1/settings", s.getSettings)
+	mux.HandleFunc("PUT /api/v1/settings", s.putSettings)
+	mux.HandleFunc("GET /api/v1/oracle", s.oracleReport)
+	mux.HandleFunc("GET /api/v1/images", s.imageUpdates)
+	mux.HandleFunc("POST /api/v1/images/check", s.checkImages)
 
 	mux.HandleFunc("GET /api/v1/alerts", s.listAlerts)
 	mux.HandleFunc("GET /api/v1/audit", s.audit)
@@ -539,4 +550,86 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+// ---- Chronologie, sourdine ----
+
+func (s *Server) containerEvents(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.find(w, r)
+	if !ok {
+		return
+	}
+	list, err := s.st.Events(r.Context(), c.Name, queryInt(r, "limit", 80, 1, 500))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) muteContainer(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.find(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Muted bool `json:"muted"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON invalide : "+err.Error())
+		return
+	}
+	set, err := s.mon.Settings().SetMuted(r.Context(), c.Name, in.Muted)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	action := "unmute"
+	if in.Muted {
+		action = "mute"
+	}
+	s.st.Audit(r.Context(), s.clientIP(r), action, c.Name, "ok", r.UserAgent())
+	writeJSON(w, http.StatusOK, set)
+}
+
+// ---- Réglages ----
+
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.mon.Settings().Get())
+}
+
+func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
+	var in settings.Settings
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "JSON invalide : "+err.Error())
+		return
+	}
+	out, err := s.mon.Settings().Update(r.Context(), in)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.st.Audit(r.Context(), s.clientIP(r), "settings", "alertes", "ok", r.UserAgent())
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ---- Oracle, images ----
+
+func (s *Server) oracleReport(w http.ResponseWriter, r *http.Request) {
+	rep, err := oracle.Evaluate(r.Context(), s.st, s.mon.Host.Kernel, s.mon.Host.NumCPU)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rep)
+}
+
+func (s *Server) imageUpdates(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.mon.ImageUpdates())
+}
+
+func (s *Server) checkImages(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	writeJSON(w, http.StatusOK, s.mon.CheckImages(ctx, true))
 }

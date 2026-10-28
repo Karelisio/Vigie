@@ -27,6 +27,8 @@ type CheckResult struct {
 	Status    int    `json:"status"`
 	LatencyMS int64  `json:"latency_ms"`
 	Error     string `json:"error,omitempty"`
+	// Expiration du certificat TLS (ms Unix), 0 si non HTTPS.
+	CertExpires int64 `json:"cert_expires,omitempty"`
 }
 
 var ErrNoRows = sql.ErrNoRows
@@ -104,8 +106,8 @@ func (s *Store) DeleteCheck(ctx context.Context, id int64) error {
 }
 
 func (s *Store) AddResult(ctx context.Context, r CheckResult) error {
-	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO check_results (check_id, ts, ok, status, latency_ms, error) VALUES (?, ?, ?, ?, ?, ?)`,
-		r.CheckID, r.TS, r.OK, r.Status, r.LatencyMS, r.Error)
+	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO check_results (check_id, ts, ok, status, latency_ms, error, cert_expires) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		r.CheckID, r.TS, r.OK, r.Status, r.LatencyMS, r.Error, r.CertExpires)
 	if err != nil {
 		return err
 	}
@@ -122,7 +124,7 @@ func (s *Store) AddResult(ctx context.Context, r CheckResult) error {
 
 // RecentResults renvoie les n derniers résultats, du plus ancien au plus récent.
 func (s *Store) RecentResults(ctx context.Context, id int64, n int) ([]CheckResult, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT ts, ok, status, latency_ms, COALESCE(error, '') FROM
+	rows, err := s.db.QueryContext(ctx, `SELECT ts, ok, status, latency_ms, COALESCE(error, ''), COALESCE(cert_expires, 0) FROM
 		(SELECT * FROM check_results WHERE check_id = ? ORDER BY ts DESC LIMIT ?) ORDER BY ts`, id, n)
 	if err != nil {
 		return nil, err
@@ -131,7 +133,7 @@ func (s *Store) RecentResults(ctx context.Context, id int64, n int) ([]CheckResu
 	out := []CheckResult{}
 	for rows.Next() {
 		r := CheckResult{CheckID: id}
-		if err := rows.Scan(&r.TS, &r.OK, &r.Status, &r.LatencyMS, &r.Error); err != nil {
+		if err := rows.Scan(&r.TS, &r.OK, &r.Status, &r.LatencyMS, &r.Error, &r.CertExpires); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

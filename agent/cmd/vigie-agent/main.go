@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // fuseau horaire (TZ) pour les heures calmes, même sans base système
 
 	"github.com/karelisio/vigie/agent/internal/alerts"
 	"github.com/karelisio/vigie/agent/internal/api"
@@ -21,6 +22,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/docker"
 	"github.com/karelisio/vigie/agent/internal/monitor"
 	"github.com/karelisio/vigie/agent/internal/qr"
+	"github.com/karelisio/vigie/agent/internal/settings"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/system"
 )
@@ -63,13 +65,19 @@ func run(log *slog.Logger) error {
 	}
 
 	sys := system.New(cfg.HostProc, cfg.HostSys, cfg.HostRoot)
-	mon := monitor.New(cfg, dk, sys, st, log)
+	set := settings.Load(ctx, st, cfg)
+	mon := monitor.New(cfg, dk, sys, st, set, log)
 	runner := checks.NewRunner(st, log, version, cfg.CheckFailures)
 	runner.Seed(ctx, cfg.ChecksSeed)
 	eng := alerts.New(ctx, cfg, mon, dk, st, log)
 
 	mon.OnSystem = eng.OnSystem
 	mon.OnEvent = eng.OnEvent
+	mon.OnImageUpdates = eng.OnImageUpdates
+	set.OnChange = func(s settings.Settings) {
+		mon.Broadcast("settings", s)
+		mon.Refresh()
+	}
 	runner.OnChange = mon.SetChecks
 	runner.OnResult = eng.OnCheck
 
