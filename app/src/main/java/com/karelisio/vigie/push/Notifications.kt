@@ -27,7 +27,7 @@ object Notifications {
     const val EXTRA_CONTAINER_NAME = "container_name"
     const val EXTRA_CHECK = "check_id"
     const val EXTRA_SERVER_URL = "server_url"
-    /** Action demandée depuis une notification : restart, update ou update_all. */
+    /** Action demandée depuis une notification : restart, update, update_all ou rollback. */
     const val EXTRA_ACTION = "action"
 
     fun createChannels(context: Context) {
@@ -113,6 +113,9 @@ object Notifications {
             data["kind"] == "container" && target.isNotEmpty() -> Triple("restart", "Redémarrer", R.drawable.ic_restart)
             data["kind"] == "image" && target.contains(", ") -> Triple("update_all", "Tout mettre à jour", R.drawable.ic_update)
             data["kind"] == "image" && target.isNotEmpty() -> Triple("update", "Mettre à jour", R.drawable.ic_update)
+            // Surconsommation après une mise à jour : l'agent (0.6 et plus) indique si un retour est possible.
+            data["kind"] == "regression" && data["action"] == "rollback" && target.isNotEmpty() ->
+                Triple("rollback", "Revenir à la version précédente", R.drawable.ic_undo)
             else -> null
         }
         if (button != null) {

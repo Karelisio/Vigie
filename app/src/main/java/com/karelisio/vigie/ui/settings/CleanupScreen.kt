@@ -157,7 +157,8 @@ fun CleanupScreen(nav: NavHostController, vm: CleanupViewModel = viewModel()) {
                 item {
                     CleanupRow(
                         Icons.Rounded.Layers, "Images inutilisées",
-                        "Anciennes versions et images sans conteneur. Elles seront retéléchargées si besoin.",
+                        "Anciennes versions et images sans conteneur. Elles seront retéléchargées si besoin." +
+                            rollbackNote(p.rollbackImages.count),
                         p.images, images, Modifier.cascade(1),
                     ) { images = it }
                 }
@@ -221,6 +222,13 @@ fun CleanupScreen(nav: NavHostController, vm: CleanupViewModel = viewModel()) {
             dismissButton = { TextButton(onClick = { confirm = false }) { Text("Annuler") } },
         )
     }
+}
+
+/** Versions précédentes gardées pour revenir en arrière, supprimées avec les images inutilisées (agent 0.6.0). */
+internal fun rollbackNote(count: Int): String = when {
+    count <= 0 -> ""
+    count == 1 -> " Dont 1 version précédente gardée pour revenir en arrière (retéléchargée au besoin)."
+    else -> " Dont $count versions précédentes gardées pour revenir en arrière (retéléchargées au besoin)."
 }
 
 @Composable

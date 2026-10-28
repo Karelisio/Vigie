@@ -262,6 +262,7 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
         val guard = LocalActionGuard.current
         val now = com.karelisio.vigie.ui.components.rememberNow(5_000)
         val job = state.jobs.firstOrNull { it.concerns(c) && (!it.done || now - it.finishedAt < 10 * 60_000) }
+        val rollback = rememberRollback(c, state)
         fun runJob(label: String?, block: suspend () -> Unit) {
             scope.launch {
                 if (label != null && !guard(label)) return@launch
@@ -281,11 +282,15 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
             onStack = { runJob("Mettre à jour la stack ${c.project}") { vm.stack(c.project, "update") } },
             modifier = Modifier.padding(horizontal = 16.dp).cascade(2),
             agentVersion = state.agentVersion,
+            rollback = rollback,
         )
         Spacer(Modifier.height(12.dp))
         Charts(history, vm::loadHistory, Modifier.padding(horizontal = 16.dp).cascade(2))
         Spacer(Modifier.height(12.dp))
-        TimelineCard(events, Modifier.padding(horizontal = 16.dp).cascade(3))
+        TimelineCard(
+            events, Modifier.padding(horizontal = 16.dp).cascade(3),
+            onRollback = rollback?.takeIf { it.ready && state.runningJob == null }?.let { rb -> { haptics.tick(); rb.confirm = true } },
+        )
         Spacer(Modifier.height(12.dp))
         detail?.health?.takeIf { it.status.isNotEmpty() }?.let { h ->
             SectionCard(Modifier.padding(horizontal = 16.dp).cascade(3), title = "Healthcheck") {

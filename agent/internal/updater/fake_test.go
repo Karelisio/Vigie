@@ -26,6 +26,11 @@ type fakeDocker struct {
 	removedImg []string
 	connected  []string
 	created    []map[string]any
+
+	digests  map[string][]string // ID d'image → RepoDigests
+	registry map[string]string   // « dépôt@sha256:… » publié → ID d'image
+	deleted  map[string]bool     // images supprimées du disque
+	pulled   []string            // références téléchargées
 }
 
 type fakeCtr struct {
@@ -42,6 +47,7 @@ func newFake(t *testing.T) (*fakeDocker, *httptest.Server) {
 		t: t, api: "1.47",
 		containers: map[string]*fakeCtr{}, tags: map[string]string{}, remote: map[string]string{},
 		imageCfg: map[string]map[string]any{}, crashing: map[string]bool{}, failCreate: map[string]bool{},
+		digests: map[string][]string{}, registry: map[string]string{}, deleted: map[string]bool{},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
@@ -74,6 +80,42 @@ func (f *fakeDocker) byName(name string) *fakeCtr {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.find(name)
+}
+
+// resolve renvoie l'ID d'une image locale désignée par référence, ID ou « dépôt@sha256:… ».
+func (f *fakeDocker) resolve(ref string) string {
+	id := f.tags[ref]
+	if id == "" {
+		if _, ok := f.imageCfg[ref]; ok {
+			id = ref
+		}
+	}
+	if id == "" && strings.Contains(ref, "@") {
+		for img, list := range f.digests {
+			for _, d := range list {
+				if d == ref {
+					id = img
+				}
+			}
+		}
+	}
+	if f.deleted[id] {
+		return ""
+	}
+	return id
+}
+
+// tagOf renvoie l'image sur laquelle pointe une référence locale.
+func (f *fakeDocker) tagOf(ref string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.tags[ref]
+}
+
+func (f *fakeDocker) removed(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deleted[id]
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -119,10 +161,7 @@ func (f *fakeDocker) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ref, _ := body["Image"].(string)
-		img := f.tags[ref]
-		if _, isID := f.imageCfg[ref]; img == "" && isID {
-			img = ref
-		}
+		img := f.resolve(ref)
 		if img == "" {
 			writeJSON(w, 404, map[string]any{"message": "no such image " + ref})
 			return
@@ -145,33 +184,60 @@ func (f *fakeDocker) serve(w http.ResponseWriter, r *http.Request) {
 
 	case strings.HasPrefix(p, "/images/create"):
 		ref := q.Get("fromImage") + ":" + q.Get("tag")
+		byDigest := strings.HasPrefix(q.Get("tag"), "sha256:")
+		if byDigest {
+			ref = q.Get("fromImage") + "@" + q.Get("tag")
+		}
 		id, ok := f.remote[ref]
+		if byDigest {
+			id, ok = f.registry[ref]
+		}
+		f.pulled = append(f.pulled, ref)
 		if !ok {
-			writeJSON(w, 200, map[string]any{"error": "pull access denied"})
+			writeJSON(w, 200, map[string]any{"error": "manifest unknown"})
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintln(w, `{"status":"Pulling fs layer","id":"l1"}`)
 		fmt.Fprintln(w, `{"status":"Downloading","id":"l1","progressDetail":{"current":50,"total":100}}`)
 		fmt.Fprintln(w, `{"status":"Pull complete","id":"l1"}`)
-		f.tags[ref] = id
-
-	case strings.HasPrefix(p, "/images/") && strings.HasSuffix(p, "/json"):
-		ref := strings.TrimSuffix(strings.TrimPrefix(p, "/images/"), "/json")
-		id := f.tags[ref]
-		if id == "" {
-			if _, ok := f.imageCfg[ref]; ok {
-				id = ref
-			}
+		delete(f.deleted, id)
+		if !byDigest {
+			f.tags[ref] = id
 		}
+
+	case strings.HasPrefix(p, "/images/") && strings.HasSuffix(p, "/tag") && r.Method == http.MethodPost:
+		id := f.resolve(strings.TrimSuffix(strings.TrimPrefix(p, "/images/"), "/tag"))
 		if id == "" {
 			writeJSON(w, 404, map[string]any{"message": "no such image"})
 			return
 		}
-		writeJSON(w, 200, map[string]any{"Id": id, "Config": f.imageCfg[id]})
+		f.tags[q.Get("repo")+":"+q.Get("tag")] = id
+		w.WriteHeader(201)
+
+	case strings.HasPrefix(p, "/images/") && strings.HasSuffix(p, "/json"):
+		id := f.resolve(strings.TrimSuffix(strings.TrimPrefix(p, "/images/"), "/json"))
+		if id == "" {
+			writeJSON(w, 404, map[string]any{"message": "no such image"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"Id": id, "Config": f.imageCfg[id], "RepoDigests": f.digests[id], "Created": "2026-09-01T10:00:00.123456789Z"})
 
 	case strings.HasPrefix(p, "/images/") && r.Method == http.MethodDelete:
+		id := f.resolve(strings.TrimPrefix(p, "/images/"))
+		for _, c := range f.containers {
+			if c.Image == id {
+				writeJSON(w, 409, map[string]any{"message": "image is being used by running container"})
+				return
+			}
+		}
 		f.removedImg = append(f.removedImg, strings.TrimPrefix(p, "/images/"))
+		f.deleted[id] = true
+		for ref, tid := range f.tags {
+			if tid == id {
+				delete(f.tags, ref)
+			}
+		}
 		writeJSON(w, 200, []any{})
 
 	case len(parts) == 3 && parts[0] == "networks" && parts[2] == "connect":

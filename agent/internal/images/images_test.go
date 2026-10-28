@@ -24,6 +24,25 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestRepoDigest(t *testing.T) {
+	for _, c := range []struct {
+		ref     string
+		digests []string
+		want    string
+	}{
+		{"redis:7", []string{"redis@sha256:aaa"}, "sha256:aaa"},
+		{"g0ldyy/comet:latest", []string{"docker.io/g0ldyy/comet@sha256:bbb"}, "sha256:bbb"},
+		{"ghcr.io/x/y:latest", []string{"ghcr.io/other/z@sha256:ccc", "ghcr.io/x/y@sha256:ddd"}, "sha256:ddd"},
+		{"ghcr.io/x/y:latest", []string{"ghcr.io/other/z@sha256:ccc"}, ""},
+		{"localhost:5000/app", []string{"localhost:5000/app@sha256:eee"}, ""},
+		{"redis:7", nil, ""},
+	} {
+		if got := RepoDigest(c.ref, c.digests); got != c.want {
+			t.Errorf("RepoDigest(%q, %v) = %q, attendu %q", c.ref, c.digests, got, c.want)
+		}
+	}
+}
+
 func TestUpdateAvailable(t *testing.T) {
 	local := []string{"redis@sha256:aaa"}
 	if upd, known := UpdateAvailable("redis:7", "sha256:aaa", local); upd || !known {

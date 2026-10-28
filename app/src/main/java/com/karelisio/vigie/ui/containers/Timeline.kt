@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -13,6 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,7 +36,7 @@ import com.karelisio.vigie.ui.components.SectionCard
 import com.karelisio.vigie.ui.theme.Vigie
 
 /** Un épisode de la vie du conteneur : plusieurs événements Docker rapprochés, résumés en une phrase. */
-data class TimelineGroup(val ts: Long, val title: String, val detail: String, val tone: String)
+data class TimelineGroup(val ts: Long, val title: String, val detail: String, val tone: String, val kind: String = "")
 
 private const val WINDOW_MS = 45_000L
 
@@ -61,7 +65,7 @@ private fun summarize(c: List<TimelineEvent>): TimelineGroup {
     val crashed = exit != null && exit != 0 && exit != 137 && exit != 143 && byVigie == null && "stop" !in actions
     val ts = c.first().ts
     val count = if (c.size > 1) "${c.size} événements" else ""
-    fun g(title: String, tone: String, detail: String = count) = TimelineGroup(ts, title, detail, tone)
+    fun g(title: String, tone: String, detail: String = count, kind: String = "") = TimelineGroup(ts, title, detail, tone, kind)
 
     if (byVigie != null && byVigie.detail != "ok" && byVigie.detail.isNotEmpty() && c.size == 1) {
         return g("Échec de « ${verb(byVigie.action)} »$fromVigie", "critical", byVigie.detail)
@@ -72,6 +76,9 @@ private fun summarize(c: List<TimelineEvent>): TimelineGroup {
             val reason = c.first { it.action == "autoheal" }.detail
             g("Réparé automatiquement (${autoHealReason(reason)})", "warning", if (reason == "down" && exit != null) "code $exit" else count)
         }
+        // Mise à jour et retour à la version précédente par Vigie (agent 0.6.0) : « 1.0 → 2.0 ».
+        "rollback" in actions -> g("Revenu à la version précédente", "warning", c.first { it.action == "rollback" }.detail, "rollback")
+        "update" in actions -> g("Mis à jour depuis Vigie", "ok", c.first { it.action == "update" }.detail, "update")
         "oom" in actions -> g("Tué : mémoire saturée", "critical")
         "health" in actions -> when (c.first().detail) {
             "healthy" -> g("Healthcheck OK", "ok")
@@ -101,8 +108,9 @@ private fun verb(action: String) = when (action) {
     else -> action
 }
 
+/** [onRollback] : bouton « Revenir à la version précédente » sous la dernière mise à jour (null : absent). */
 @Composable
-fun TimelineCard(events: List<TimelineEvent>?, modifier: Modifier = Modifier) {
+fun TimelineCard(events: List<TimelineEvent>?, modifier: Modifier = Modifier, onRollback: (() -> Unit)? = null) {
     val groups = remember(events) { events?.let(::groupTimeline) }
     var all by rememberSaveable { mutableStateOf(false) }
     SectionCard(
@@ -121,14 +129,19 @@ fun TimelineCard(events: List<TimelineEvent>?, modifier: Modifier = Modifier) {
             )
             else -> {
                 val shown = if (all) groups else groups.take(6)
-                shown.forEachIndexed { i, g -> TimelineRow(g, last = i == shown.lastIndex) }
+                // Le retour concerne la mise à jour la plus récente, si rien ne l'a suivie depuis.
+                val latestUpdate = groups.indexOfFirst { it.kind == "update" || it.kind == "rollback" }
+                    .takeIf { it >= 0 && groups[it].kind == "update" }
+                shown.forEachIndexed { i, g ->
+                    TimelineRow(g, last = i == shown.lastIndex, onRollback = onRollback.takeIf { i == latestUpdate })
+                }
             }
         }
     }
 }
 
 @Composable
-private fun TimelineRow(g: TimelineGroup, last: Boolean) {
+private fun TimelineRow(g: TimelineGroup, last: Boolean, onRollback: (() -> Unit)? = null) {
     val color = Vigie.status.of(g.tone)
     Row(Modifier.height(IntrinsicSize.Min)) {
         Column(Modifier.width(20.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -152,6 +165,13 @@ private fun TimelineRow(g: TimelineGroup, last: Boolean) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (onRollback != null) {
+                TextButton(onClick = onRollback, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                    Icon(Icons.AutoMirrored.Rounded.Undo, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Revenir à la version précédente")
+                }
+            }
         }
     }
 }

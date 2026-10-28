@@ -198,6 +198,13 @@ fun AutoUpdateScreen(nav: NavHostController, vm: AlertSettingsViewModel = viewMo
                                                         MaterialTheme.colorScheme.onTertiaryContainer,
                                                         Modifier.padding(end = 8.dp),
                                                     )
+                                                    // Version écartée par un retour arrière : pas réinstallée la nuit.
+                                                    ctr.updateIgnored -> Chip(
+                                                        "ignorée",
+                                                        MaterialTheme.colorScheme.surfaceContainerHighest,
+                                                        MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        Modifier.padding(end = 8.dp),
+                                                    )
                                                 }
                                             }
                                         }

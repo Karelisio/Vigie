@@ -142,6 +142,9 @@ func run(log *slog.Logger) error {
 				}
 				reg.OnUpdated(context.Background(), updated, time.UnixMilli(j.FinishedAt))
 			}
+			if j.Kind == "rollback" && j.OK {
+				reg.Forget(context.Background(), j.Target) // plus de comparaison avec la version écartée
+			}
 			if j.Kind == "backup" {
 				// Sauvegardes : un échec est une alerte à part entière, même appli ouverte.
 				eng.NotifyBackup(j.OK, j.Message, j.Error)
@@ -157,7 +160,11 @@ func run(log *slog.Logger) error {
 		PruneImages: func() bool { return set.Get().PruneImages },
 		DataDir:     cfg.DataDir,
 		Version:     version,
+		Store:       st,
 	})
+	// Retour à la version précédente : version écartée ignorée, bouton sur l'alerte de surconsommation.
+	mon.IgnoredDigest = upd.IgnoredDigest
+	eng.Rollback = upd.CanRollback
 	if r := updater.LastSelfUpdate(cfg.DataDir); r != nil && time.Since(time.UnixMilli(r.TS)) < 10*time.Minute {
 		if r.OK {
 			log.Info("agent mis à jour", "depuis", r.From, "vers", version)

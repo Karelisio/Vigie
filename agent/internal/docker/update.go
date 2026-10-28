@@ -176,6 +176,11 @@ func (c *Client) Pull(ctx context.Context, ref string, fn func(PullEvent)) error
 	if tag != "" {
 		q.Set("tag", tag)
 	}
+	return c.pull(ctx, q, fn)
+}
+
+// pull lit le flux de progression de POST /images/create.
+func (c *Client) pull(ctx context.Context, q url.Values, fn func(PullEvent)) error {
 	resp, err := c.call(ctx, c.stream, http.MethodPost, "/images/create", q, nil)
 	if err != nil {
 		return err

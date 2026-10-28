@@ -32,6 +32,24 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 
 `problem` vaut `""`, `down` (arrêt anormal), `oom`, `restarting` ou `unhealthy`. CPU en % de la capacité totale de l'hôte.
 
+## Retour à la version précédente (agent 0.6.0)
+
+| Méthode | Route | Réponse |
+| --- | --- | --- |
+| GET | `/api/v1/containers/{id\|nom}/rollback` | point de retour du conteneur, 404 s'il n'en a pas |
+| POST | `/api/v1/containers/{id\|nom}/rollback` | recrée le conteneur avec l'image d'avant sa dernière mise à jour (202 : `job`, `kind` et `action` `rollback`). 404 sans point de retour ; 409 si une opération est en cours, si le retour est déjà fait, si le conteneur a changé d'image depuis ou pour l'agent lui-même ; 403 si les mises à jour sont désactivées |
+| DELETE | `/api/v1/containers/{id\|nom}/rollback/ignore` | autorise de nouveau la version écartée, renvoie le point |
+
+Point de retour : `container`, `image_ref` (référence configurée, ex. `ghcr.io/x/y:latest`), `old_image_id`, `old_digests[]` (`dépôt@sha256:…`), `old_created` (construction de l'image, ms, 0 si inconnue), `old_version` (label `org.opencontainers.image.version`, `""` sinon), `new_image_id`, `new_digests[]`, `new_version`, `updated_at`, `rolled_back_at` (0 avant le retour), `ignored`, `ignored_digest` (digest publié de la version écartée, absent si inconnu), `state` (`ready` : retour possible, `rolled_back` : déjà revenu, `stale` : le conteneur a changé d'image depuis, par exemple redéployé depuis Dockhand), `old_label` / `new_label` (version, sinon début du digest ou de l'ID), `image_present` (ancienne image encore sur le disque), `downloadable` (re-téléchargeable par son digest).
+
+- Un point est noté avant chaque mise à jour faite par Vigie (bouton, stack, tout mettre à jour, nuit), un par conteneur, conservé en base ; jamais pour l'agent (il a son propre retour automatique). Si la mise à jour échoue, le point précédent est rétabli.
+- Avec `prune_images`, l'image d'avant la mise à jour est gardée ; celle du point précédent est supprimée. Après un retour, la version écartée est supprimée.
+- Le retour repose localement la référence `image_ref` sur l'ancienne image (comme `docker tag`), puis recrée le conteneur comme une mise à jour : `Config.Image` garde la référence (Dockhand, compose, détection des mises à jour), réseaux, volumes et conteneurs liés suivent, et si l'ancienne version ne démarre pas, la version actuelle est rétablie avec sa référence. Ancienne image supprimée : téléchargement par digest, sinon échec explicite sans rien changer.
+- La version écartée est ignorée : les mises à jour de stack, « tout mettre à jour » et de nuit ne la réinstallent pas (résultat « version ignorée »), `GET /api/v1/images` l'indique (`ignored: true`, `update_available: false`) comme chaque conteneur (`update_ignored`). Une version plus récente est proposée et installée normalement ; `POST /api/v1/containers/{id}/update` installe la version ignorée si on le demande.
+- Chronologie : événements `update` (`detail` : « 1.0 → 2.0 ») et `rollback` (« 2.0 → 1.0 ») ; journal : `rollback` et `rollback-unignore` ; notification de fin comme les autres opérations.
+- `GET /api/v1/cleanup` ajoute `rollback_images` (`count, size`) : images gardées pour revenir en arrière, comprises dans `images`. Le nettoyage les supprime ; le retour les re-télécharge alors par leur digest.
+- Alerte de surconsommation (`regression`) : quand un retour est possible, la notification push porte `action: "rollback"` (bouton « Revenir à la version précédente ») et son texte le propose.
+
 ## Checks HTTP
 
 | Méthode | Route | Corps / réponse |

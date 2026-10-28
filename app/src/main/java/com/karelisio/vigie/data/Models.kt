@@ -72,6 +72,8 @@ data class Container(
     @SerialName("image_ref") val imageRef: String = "",
     @SerialName("update_available") val updateAvailable: Boolean = false,
     val muted: Boolean = false,
+    /** Version publiée écartée par un retour à la version précédente (agent 0.6.0 et plus). */
+    @SerialName("update_ignored") val updateIgnored: Boolean = false,
 ) {
     val running get() = state == "running"
     val hasProblem get() = problem.isNotEmpty()
@@ -385,6 +387,8 @@ data class ImageStatus(
     @SerialName("update_available") val updateAvailable: Boolean = false,
     @SerialName("checked_at") val checkedAt: Long = 0,
     val error: String? = null,
+    /** Version écartée par un retour à la version précédente (agent 0.6.0 et plus). */
+    val ignored: Boolean = false,
 )
 
 @Serializable
@@ -434,6 +438,8 @@ data class CleanupPreview(
     val volumes: CleanupCategory = CleanupCategory(),
     @SerialName("build_cache") val buildCache: CleanupCategory = CleanupCategory(),
     @SerialName("volumes_supported") val volumesSupported: Boolean = false,
+    /** Versions précédentes gardées pour revenir en arrière, comprises dans [images] (agent 0.6.0). */
+    @SerialName("rollback_images") val rollbackImages: CleanupCategory = CleanupCategory(),
 )
 
 @Serializable

@@ -75,6 +75,8 @@ type Status struct {
 	UpdateAvailable bool   `json:"update_available"`
 	CheckedAt       int64  `json:"checked_at"`
 	Error           string `json:"error,omitempty"`
+	// Ignored : la version publiée a été écartée par un retour à la version précédente.
+	Ignored bool `json:"ignored,omitempty"`
 }
 
 type Checker struct {

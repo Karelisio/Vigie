@@ -13,6 +13,7 @@ import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.NewReleases
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -66,6 +67,8 @@ internal fun UpdateCard(
     onStack: () -> Unit,
     modifier: Modifier = Modifier,
     agentVersion: String = "",
+    /** Version précédente (agent 0.6.0 et plus), null sinon. */
+    rollback: RollbackController? = null,
 ) {
     var confirm by remember { mutableStateOf<String?>(null) }
     var changelog by remember { mutableStateOf(false) }
@@ -81,6 +84,13 @@ internal fun UpdateCard(
                     MaterialTheme.colorScheme.tertiaryContainer,
                     MaterialTheme.colorScheme.onTertiaryContainer,
                     icon = Icons.Rounded.NewReleases,
+                )
+            } else if (c.updateIgnored) {
+                Chip(
+                    "Version ignorée",
+                    MaterialTheme.colorScheme.surfaceContainerHighest,
+                    MaterialTheme.colorScheme.onSurfaceVariant,
+                    icon = Icons.Rounded.VisibilityOff,
                 )
             }
         },
@@ -122,6 +132,7 @@ internal fun UpdateCard(
                 Icon(Icons.Rounded.CloudDownload, "Télécharger l'image sans redémarrer")
             }
         }
+        rollback?.let { RollbackSection(it, busy) }
         if (recent) AutoUpdateSwitch(c)
         if (c.project.isNotEmpty()) {
             TextButton(onClick = { haptics.tick(); confirm = "stack" }, enabled = !busy) {
@@ -131,6 +142,8 @@ internal fun UpdateCard(
             }
         }
     }
+
+    rollback?.let { RollbackDialog(it) }
 
     if (changelog) {
         ChangelogSheet(

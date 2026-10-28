@@ -49,7 +49,15 @@ func setupComet(f *fakeDocker) *fakeCtr {
 		"Labels": map[string]any{"org.opencontainers.image.version": "1.0"},
 	})
 	f.remote["g0ldyy/comet:latest"] = "sha256:new"
-	f.imageCfg["sha256:new"] = map[string]any{"Env": []any{"PATH=/usr/bin", "APP_VERSION=2.0"}, "Cmd": []any{"python", "app.py"}}
+	f.imageCfg["sha256:new"] = map[string]any{
+		"Env": []any{"PATH=/usr/bin", "APP_VERSION=2.0"}, "Cmd": []any{"python", "app.py"},
+		"Labels": map[string]any{"org.opencontainers.image.version": "2.0"},
+	}
+	// Digests publiés : l'ancienne version reste téléchargeable par son digest.
+	f.digests["sha256:old"] = []string{"g0ldyy/comet@sha256:d1d1d1d1d1d1d1d1"}
+	f.digests["sha256:new"] = []string{"g0ldyy/comet@sha256:d2d2d2d2d2d2d2d2"}
+	f.registry["g0ldyy/comet@sha256:d1d1d1d1d1d1d1d1"] = "sha256:old"
+	f.registry["g0ldyy/comet@sha256:d2d2d2d2d2d2d2d2"] = "sha256:new"
 	return f.addContainer(&fakeCtr{
 		ID: strings.Repeat("a", 64), Name: "comet", Image: "sha256:old", Running: true,
 		Config: map[string]any{
@@ -114,7 +122,8 @@ func TestUpdateRecreatesWithNewImage(t *testing.T) {
 	if a := ep["Aliases"].([]any); len(a) != 1 || a[0] != "comet" {
 		t.Errorf("alias = %v", a)
 	}
-	if len(f.removedImg) != 1 || f.removedImg[0] != "sha256:old" {
+	// L'ancienne image reste pour pouvoir y revenir, même avec la suppression des anciennes images.
+	if len(f.removedImg) != 0 {
 		t.Errorf("images supprimées = %v", f.removedImg)
 	}
 }

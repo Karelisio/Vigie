@@ -33,6 +33,7 @@ class AlertActionReceiver : BroadcastReceiver() {
                     when (action) {
                         "update" -> c.api.postEmpty<AgentJob>(server, "/api/v1/containers/$ref/update")
                         "update_all" -> c.api.postEmpty<AgentJob>(server, "/api/v1/updates/apply")
+                        "rollback" -> c.api.postEmpty<AgentJob>(server, "/api/v1/containers/$ref/rollback")
                         else -> c.api.postEmpty<ActionResult>(server, "/api/v1/containers/$ref/restart")
                     }
                 }
@@ -40,6 +41,7 @@ class AlertActionReceiver : BroadcastReceiver() {
             val (ok, failed) = when (action) {
                 "update" -> "Mise à jour de $name lancée" to "Échec de la mise à jour de $name"
                 "update_all" -> "Mises à jour lancées" to "Échec des mises à jour"
+                "rollback" -> "Retour de $name à sa version précédente lancé" to "Échec du retour de $name à sa version précédente"
                 else -> "$name redémarré" to "Échec du redémarrage de $name"
             }
             update(

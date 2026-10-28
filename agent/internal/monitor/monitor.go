@@ -55,6 +55,8 @@ type Container struct {
 	ImageRef        string `json:"image_ref"`
 	UpdateAvailable bool   `json:"update_available"`
 	Muted           bool   `json:"muted"`
+	// Version publiée écartée par un retour à la version précédente (update_available est alors faux).
+	UpdateIgnored bool `json:"update_ignored,omitempty"`
 }
 
 type Issue struct {
@@ -155,6 +157,8 @@ type Monitor struct {
 	OnImageUpdates func(names []string)
 	// OnMinute reçoit chaque minute le dernier instantané système (compteur de trafic mensuel).
 	OnMinute func(ts time.Time, s system.Snapshot)
+	// IgnoredDigest renvoie le digest d'une version écartée par un retour arrière ("" si aucune).
+	IgnoredDigest func(name string) string
 }
 
 func New(cfg *config.Config, dk *docker.Client, sys *system.Collector, st *store.Store, set *settings.Manager, log *slog.Logger) *Monitor {
@@ -416,6 +420,7 @@ func (m *Monitor) buildContainer(ctx context.Context, c docker.Container) Contai
 	}
 	m.mu.RLock()
 	ci.UpdateAvailable = m.updates[name].UpdateAvailable
+	ci.UpdateIgnored = m.updates[name].Ignored
 	m.mu.RUnlock()
 
 	if c.State == "running" {
@@ -844,6 +849,9 @@ func (m *Monitor) CheckImages(ctx context.Context, force bool) map[string]images
 			st.Error = err.Error()
 		} else if upd, known := images.UpdateAvailable(it.ref, remote, digests); known {
 			st.UpdateAvailable = upd
+			if upd && m.IgnoredDigest != nil {
+				ignoreUpdate(&st, remote, m.IgnoredDigest(it.name))
+			}
 		}
 		results[it.name] = st
 	}
@@ -905,6 +913,31 @@ func (m *Monitor) SetTransient(name string, on bool) {
 		delete(m.transient, name)
 	}
 	m.mu.Unlock()
+}
+
+// ignoreUpdate marque comme ignorée la version publiée remote si un retour arrière l'a écartée
+// (ignored : son digest) ; une version plus récente reste signalée.
+func ignoreUpdate(st *images.Status, remote, ignored string) {
+	if st.UpdateAvailable && ignored != "" && remote == ignored {
+		st.UpdateAvailable, st.Ignored = false, true
+	}
+}
+
+// UnignoreUpdate signale de nouveau comme disponible la version qu'un retour arrière faisait
+// ignorer, sans nouvelle notification (elle n'est pas nouvelle).
+func (m *Monitor) UnignoreUpdate(name string) {
+	m.mu.Lock()
+	st, ok := m.updates[name]
+	if !ok || !st.Ignored {
+		m.mu.Unlock()
+		return
+	}
+	st.Ignored, st.UpdateAvailable = false, true
+	m.updates[name] = st
+	b, _ := json.Marshal(m.updates)
+	m.mu.Unlock()
+	_ = m.st.Set(context.Background(), "image_updates", string(b))
+	m.Refresh()
 }
 
 // AfterUpdate rafraîchit la liste puis l'état des images une fois les conteneurs recréés.

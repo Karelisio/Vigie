@@ -24,7 +24,11 @@ func (s *Server) cleanupPreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "Docker : "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, cleanup.Estimate(du, s.volumesSupported(ctx)))
+	writeJSON(w, http.StatusOK, struct {
+		cleanup.Preview
+		// Images gardées pour revenir à une version précédente, comprises dans images (agent 0.6.0).
+		RollbackImages cleanup.Category `json:"rollback_images"`
+	}{cleanup.Estimate(du, s.volumesSupported(ctx)), cleanup.Among(du, s.upd.RollbackImages(ctx))})
 }
 
 func (s *Server) cleanupRun(w http.ResponseWriter, r *http.Request) {

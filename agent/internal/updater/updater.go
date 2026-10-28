@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/karelisio/vigie/agent/internal/docker"
+	"github.com/karelisio/vigie/agent/internal/store"
 )
 
 var (
@@ -39,8 +40,8 @@ type Result struct {
 // Job décrit une opération en cours ou terminée, diffusée en direct à l'appli.
 type Job struct {
 	ID         string   `json:"id"`
-	Kind       string   `json:"kind"`   // update, pull, self, stack, batch, auto (nuit)
-	Action     string   `json:"action"` // update, pull, restart, start, stop
+	Kind       string   `json:"kind"`   // update, pull, self, stack, batch, auto (nuit), rollback
+	Action     string   `json:"action"` // update, pull, restart, start, stop, rollback
 	Target     string   `json:"target"` // conteneur, stack ou « all »
 	Phase      string   `json:"phase"`  // queued, pulling, recreating, verifying, done, failed
 	Progress   float64  `json:"progress"`
@@ -76,6 +77,8 @@ type Options struct {
 	PruneImages func() bool
 	DataDir     string
 	Version     string
+	// Store conserve les points de retour et la chronologie (facultatif : en mémoire sinon).
+	Store *store.Store
 }
 
 type Manager struct {
@@ -92,12 +95,15 @@ type Manager struct {
 	recent   []Job
 	lastPub  time.Time
 	multiNet *bool
+
+	points *points // versions précédentes, pour revenir en arrière
 }
 
 func New(dk *docker.Client, log *slog.Logger, hooks Hooks, opt Options) *Manager {
 	return &Manager{
 		dk: dk, log: log, hooks: hooks, opt: opt,
 		settle: 8 * time.Second, crashGrace: 2 * time.Second, poll: time.Second, helperDelay: 3 * time.Second,
+		points: newPoints(opt.Store, log),
 	}
 }
 
@@ -121,7 +127,7 @@ func (m *Manager) Jobs() []Job {
 
 func (m *Manager) start(kind, action, target string, run func(ctx context.Context, j *Job) error) (Job, error) {
 	// Redémarrer, démarrer ou arrêter une stack reste possible même sans les mises à jour d'images.
-	if (action == "update" || action == "pull" || action == "cleanup") && !m.opt.Enabled {
+	if (action == "update" || action == "pull" || action == "cleanup" || action == "rollback") && !m.opt.Enabled {
 		return Job{}, ErrDisabled
 	}
 	m.mu.Lock()
@@ -250,7 +256,7 @@ func (m *Manager) UpdateContainer(c Member, pullOnly bool) (Job, error) {
 		})
 	default:
 		return m.start("update", "update", c.Name, func(ctx context.Context, j *Job) error {
-			r, err := m.updateOne(ctx, j, c, 0, 1)
+			r, err := m.updateOne(ctx, j, c, 0, 1, true)
 			m.addResult(j, r)
 			if err == nil {
 				m.set(j, "done", 1, r.Message)
@@ -294,7 +300,7 @@ func (m *Manager) runGroup(ctx context.Context, j *Job, action string, members [
 		var err error
 		switch action {
 		case "update":
-			r, err = m.updateOne(ctx, j, c, base, span)
+			r, err = m.updateOne(ctx, j, c, base, span, false)
 		case "pull":
 			r, err = m.pullOne(ctx, j, c, base, span)
 		default:
@@ -431,8 +437,20 @@ func (m *Manager) pull(ctx context.Context, j *Job, c *docker.ContainerJSON, bas
 	}
 	name := c.CleanName()
 	m.set(j, "pulling", base, fmt.Sprintf("%s : téléchargement de %s…", name, ref))
+	if err := m.dk.Pull(ctx, ref, m.pullProgress(j, name, base, span)); err != nil {
+		return "", fmt.Errorf("téléchargement de %s : %w", ref, explainPull(err))
+	}
+	img, err := m.dk.ImageDetails(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	return img.ID, nil
+}
+
+// pullProgress suit les couches téléchargées et diffuse l'avancement (70 % de span).
+func (m *Manager) pullProgress(j *Job, name string, base, span float64) func(docker.PullEvent) {
 	layers := map[string]*layer{}
-	err = m.dk.Pull(ctx, ref, func(ev docker.PullEvent) {
+	return func(ev docker.PullEvent) {
 		if ev.ID == "" {
 			return
 		}
@@ -465,15 +483,7 @@ func (m *Manager) pull(ctx context.Context, j *Job, c *docker.ContainerJSON, bas
 			p := float64(cur) / float64(total)
 			m.set(j, "pulling", base+span*0.7*p, fmt.Sprintf("%s : téléchargement %d %%", name, int(p*100)))
 		}
-	})
-	if err != nil {
-		return "", fmt.Errorf("téléchargement de %s : %w", ref, explainPull(err))
 	}
-	img, err := m.dk.ImageDetails(ctx, ref)
-	if err != nil {
-		return "", err
-	}
-	return img.ID, nil
 }
 
 func explainPull(err error) error {
@@ -511,11 +521,15 @@ func (m *Manager) pullOne(ctx context.Context, j *Job, c Member, base, span floa
 
 // ---- Mise à jour d'un conteneur ----
 
-func (m *Manager) updateOne(ctx context.Context, j *Job, c Member, base, span float64) (Result, error) {
+// updateOne met à jour un conteneur. explicit : demandé pour lui seul (bouton de sa fiche) ; sinon
+// (stack, tout mettre à jour, nuit), une version écartée par un retour arrière n'est pas réinstallée.
+func (m *Manager) updateOne(ctx context.Context, j *Job, c Member, base, span float64, explicit bool) (Result, error) {
 	in, err := m.dk.InspectFull(ctx, c.ref())
 	if err != nil {
 		return Result{Name: c.Name, Message: err.Error()}, err
 	}
+	// Détails de l'image en service, lus avant le téléchargement qui lui retire sa référence.
+	oldImg, _ := m.dk.ImageDetails(ctx, in.Image)
 	newImage, err := m.pull(ctx, j, in, base, span)
 	if err != nil {
 		return Result{Name: c.Name, Message: err.Error()}, err
@@ -523,10 +537,33 @@ func (m *Manager) updateOne(ctx context.Context, j *Job, c Member, base, span fl
 	if newImage == in.Image {
 		return Result{Name: c.Name, OK: true, Message: c.Name + " : déjà à jour"}, nil
 	}
+	ref := str(in.Config, "Image")
+	newImg, _ := m.dk.ImageDetails(ctx, newImage)
+	prev := m.points.get(c.Name)
+	if !explicit && prev.ignores(newImage, newImg) {
+		// La référence revient à l'image en service, comme si rien n'avait été téléchargé.
+		if err := m.dk.Tag(ctx, in.Image, ref); err != nil {
+			m.log.Warn("référence non rétablie", "conteneur", c.Name, "erreur", err)
+		} else {
+			m.prune(ctx, newImage)
+		}
+		return Result{Name: c.Name, OK: true, Message: c.Name + " : version ignorée depuis le retour à la version précédente"}, nil
+	}
+	point := newPoint(c.Name, ref, in.Image, oldImg, newImage, newImg)
+	m.points.put(ctx, point) // avant la recréation : le point existe dès que le conteneur change
 	if _, err := m.Replace(ctx, j, in, newImage, "", base+span*0.7, span*0.3); err != nil {
+		m.points.restore(ctx, c.Name, prev)
 		return Result{Name: c.Name, Message: err.Error()}, err
 	}
-	m.prune(ctx, in.Image)
+	m.event(c.Name, "update", point.OldLabel()+" → "+point.NewLabel())
+	// L'image d'avant reste pour pouvoir y revenir ; celles du point précédent ne servent plus.
+	if prev != nil {
+		for _, id := range []string{prev.OldImageID, prev.NewImageID} {
+			if id != "" && id != in.Image && id != newImage {
+				m.prune(ctx, id)
+			}
+		}
+	}
 	return Result{Name: c.Name, OK: true, Updated: true, Message: c.Name + " mis à jour"}, nil
 }
 
@@ -678,7 +715,7 @@ func (m *Manager) Replace(ctx context.Context, j *Job, old *docker.ContainerJSON
 			_ = m.dk.Start(rctx, old.ID)
 		}
 		restartDeps()
-		return "", fmt.Errorf("%w (ancienne version rétablie)", err)
+		return "", &restoredError{err}
 	}
 
 	m.set(j, "recreating", base+span*0.3, name+" : création du nouveau conteneur…")
@@ -726,6 +763,12 @@ func (m *Manager) Replace(ctx context.Context, j *Job, old *docker.ContainerJSON
 	m.log.Info("conteneur recréé", "conteneur", name, "image", short(newImageID))
 	return newID, nil
 }
+
+// restoredError : la recréation a échoué et le conteneur d'origine a été remis en place.
+type restoredError struct{ err error }
+
+func (e *restoredError) Error() string { return e.err.Error() + " (ancienne version rétablie)" }
+func (e *restoredError) Unwrap() error { return e.err }
 
 // waitReady attend que le nouveau conteneur tourne (et soit en bonne santé s'il a un healthcheck).
 func (m *Manager) waitReady(ctx context.Context, j *Job, id, name string, progress float64) error {
@@ -892,6 +935,11 @@ func (j Job) Title() string {
 			return "Nettoyage terminé"
 		}
 		return "Échec du nettoyage"
+	case "rollback":
+		if j.OK {
+			return j.Target + " est revenu à sa version précédente"
+		}
+		return "Échec du retour de " + j.Target + " à sa version précédente"
 	case "auto":
 		updated, failed := 0, 0
 		for _, r := range j.Results {

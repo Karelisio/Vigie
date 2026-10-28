@@ -31,6 +31,7 @@ import androidx.navigation.compose.rememberNavController
 import com.karelisio.vigie.data.LiveEvent
 import com.karelisio.vigie.data.LockMode
 import com.karelisio.vigie.data.UserPrefs
+import com.karelisio.vigie.data.rollbackContainer
 import com.karelisio.vigie.push.Notifications
 import com.karelisio.vigie.security.LocalActionGuard
 import com.karelisio.vigie.security.LockScreen
@@ -137,6 +138,7 @@ private fun Root(prefs: UserPrefs, intent: Intent?, consumed: () -> Unit) {
         val (question, label) = when (action) {
             "update" -> "Mettre à jour $name ?" to "Mettre à jour"
             "update_all" -> "Tout mettre à jour ?" to "Tout mettre à jour"
+            "rollback" -> "Revenir à la version précédente de $name ?" to "Revenir"
             else -> "Redémarrer $name ?" to "Redémarrer"
         }
         scope.launch {
@@ -152,6 +154,7 @@ private fun Root(prefs: UserPrefs, intent: Intent?, consumed: () -> Unit) {
                 when (action) {
                     "update" -> c.repository.updateContainer(id)
                     "update_all" -> c.repository.updateAll()
+                    "rollback" -> c.repository.rollbackContainer(id)
                     else -> c.repository.action(id, "restart")
                 }
             }

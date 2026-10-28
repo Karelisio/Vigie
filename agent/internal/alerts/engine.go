@@ -34,6 +34,8 @@ type Engine struct {
 
 	// Channels relaie les notifications vers Telegram, Discord et ntfy (même sans Firebase).
 	Channels *channels.Manager
+	// Rollback indique si un conteneur peut revenir à sa version précédente (facultatif).
+	Rollback func(name string) bool
 
 	mu       sync.Mutex
 	over     map[string]time.Time // métrique → début du dépassement
@@ -350,6 +352,8 @@ type Notification struct {
 	CheckID     int64
 	Title       string
 	Body        string
+	// Action proposée par la notification push (ex. « rollback »), en plus de celles déduites de Kind.
+	Action string
 }
 
 func (e *Engine) fire(key string, n Notification) {
@@ -428,6 +432,9 @@ func (e *Engine) dispatch(n Notification, resolved, push bool) {
 	}
 	if n.CheckID != 0 {
 		data["check_id"] = strconv.FormatInt(n.CheckID, 10)
+	}
+	if n.Action != "" {
+		data["action"] = n.Action
 	}
 	go e.pushAll(data, n.Kind+":"+n.Target)
 }
