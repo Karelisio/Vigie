@@ -147,7 +147,13 @@ L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et p
 - **Nettoyage du disque** : images inutilisées, cache de construction et volumes anonymes orphelins, avec l'espace récupérable avant de confirmer (Réglages, ou appui sur la jauge Disque).
 - **Trafic du mois** avec quota (10 To sortants pour Oracle Always Free) et projection, **top consommateurs** (CPU, mémoire, réseau sur 24 h ou 7 jours), **rapport hebdomadaire** le dimanche à 19 h.
 - **Alertes sur les logs** : être prévenu quand un texte ou une regex apparaît dans les logs d'un conteneur (Réglages → Alertes et seuils, ou depuis l'écran des logs).
-- **Test réel des addons Stremio** : un service de type « Addon Stremio » vérifie que l'addon renvoie bien des liens pour un film témoin, pas seulement que son manifest répond.
+- **Test réel des addons Stremio** : un service de type « Addon Stremio » interroge l'addon comme Stremio (liens d'un film témoin, sinon sa fiche, sinon un catalogue selon ce que l'addon fournit) et explique clairement un échec (mauvaise URL, addon non configuré, message de l'addon).
+- **Surveillance depuis le téléphone** : toutes les 15 min, l'appli vérifie que chaque serveur répond ; s'il ne répond plus (agent ou VPS tombé), une notification le signale, avec la cause.
+- **Logs d'une stack** : tous les conteneurs d'un projet compose en direct, fusionnés, et sélection de lignes à copier ou partager.
+- **Canaux d'alerte** en plus des notifications : Telegram, Discord ou ntfy, toutes les alertes ou seulement les critiques (Réglages → Canaux d'alerte).
+- **Comptes debrid** (Real-Debrid, AllDebrid, TorBox, Premiumize) : jours de premium restants sur l'accueil, alerte 7 jours puis 1 jour avant la fin ou si la clé est refusée.
+- **Alerte de surconsommation après une mise à jour** : 6 h après, la mémoire ou le CPU d'un conteneur nettement au-dessus de la veille est signalé.
+- **Accès partagés en lecture seule** (Réglages → Accès partagés) : un QR code ou un lien pour qu'un proche consulte l'état du serveur, sans pouvoir agir ni voir les logs et les secrets ; révocable à tout moment.
 - **Sauvegardes** chaque jour (ou à la demande) vers un stockage compatible S3 : volumes, dossiers montés et données de Vigie, compressés, avec rétention et arrêt facultatif du conteneur pendant la copie (Réglages → Sauvegardes, voir [plus bas](#sauvegardes)).
 - **Deux widgets** (serveur, services) redimensionnables aux couleurs du système, **tuile** de réglages rapides, **raccourcis** Conteneurs/Services, **mode hors ligne** avec l'heure de la dernière mise à jour.
 - Plusieurs serveurs possibles (nom, URL, token), tokens chiffrés sur le téléphone (EncryptedSharedPreferences).
@@ -242,6 +248,8 @@ Sur le VPS (terminal), dans un dossier de travail :
 - Actions possibles : **start, stop, restart** et **mise à jour d'image**. Une mise à jour ne télécharge que l'image déjà configurée sur le conteneur et le recrée avec sa configuration actuelle : l'appli ne peut fournir ni image ni configuration. L'agent refuse de s'arrêter lui-même.
 - Chaque action est enregistrée dans un journal (date, IP, action, cible, résultat), consultable dans l'appli.
 - Les variables d'environnement des conteneurs ne sont jamais exposées.
+- Accès partagés : seule l'empreinte SHA-256 du jeton est conservée ; ils ne peuvent que consulter (ni action, ni réglage, ni logs, ni journal, ni canaux, debrid ou sauvegardes).
+- Canaux d'alerte et comptes debrid : jetons et clés restent sur l'agent, renvoyés masqués à l'appli (4 derniers caractères).
 - Sauvegardes : les clés du stockage restent sur l'agent. Elles ne sont jamais renvoyées à l'appli, ni écrites dans les logs, le journal ou la copie de la base ; changer l'adresse du stockage oblige à ressaisir la clé secrète. Comme les sauvegardes lisent le contenu des volumes choisis, garde le token aussi précieusement qu'un accès au serveur.
 
 Pour aller plus loin, tu peux placer un [socket-proxy](https://github.com/linuxserver/docker-socket-proxy) entre l'agent et Docker (`CONTAINERS=1`, `EVENTS=1`, `INFO=1`, `IMAGES=1`, `ALLOW_START=1`, `ALLOW_STOP=1`, `ALLOW_RESTARTS=1`, `POST=0` avec `VIGIE_ALLOW_UPDATES=false` ; pour les mises à jour depuis l'appli, ajoute `POST=1` et `NETWORKS=1`) et pointer `DOCKER_HOST` dessus.

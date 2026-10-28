@@ -2,6 +2,19 @@
 
 Le workflow de release publie la section correspondant au tag (`## [X.Y.Z]`).
 
+## [0.5.0]
+
+- Surveillance depuis le téléphone : l'appli vérifie toutes les 15 min que chaque serveur répond et prévient s'il ne répond plus (VPS ou agent tombé), avec la cause, puis quand il répond de nouveau.
+- Réparation automatique : redémarrage d'un conteneur en mauvaise santé depuis quelques minutes, relance après un plantage, 3 fois par heure au plus puis alerte ; suspendue en mode maintenance.
+- Canaux d'alerte : Telegram, Discord ou ntfy, en plus des notifications (toutes les alertes ou seulement les critiques).
+- Comptes debrid (Real-Debrid, AllDebrid, TorBox, Premiumize) : jours de premium restants sur l'accueil, alerte 7 jours puis 1 jour avant la fin.
+- Services Stremio : test adapté au type d'addon (liens, fiche ou catalogue) et messages clairs (mauvaise URL, addon non configuré, message de l'addon) ; préréglages corrigés.
+- Sauvegardes chaque jour vers un stockage compatible S3 (Oracle, B2, R2, MinIO…) : volumes, dossiers montés et données de Vigie, avec rétention.
+- Logs d'une stack entière en direct, et sélection de lignes à copier ou partager.
+- Alerte de surconsommation 6 h après une mise à jour (mémoire ou CPU nettement au-dessus de la veille).
+- Accès partagés en lecture seule par QR code ou lien, révocables.
+- Agent : à mettre à jour depuis l'appli (Réglages → Mettre à jour l'agent).
+
 ## [0.4.0]
 
 - Mises à jour automatiques la nuit, à l'heure choisie, pour tous les conteneurs ou une sélection (agent compris en option) ; retour arrière si un conteneur ne démarre pas, résumé au réveil.

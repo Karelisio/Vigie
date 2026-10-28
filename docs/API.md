@@ -43,7 +43,7 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 | POST | `/api/v1/checks/{id}/run` | exécute immédiatement, renvoie l'état |
 | GET | `/api/v1/checks/{id}/history?range=24h\|7d\|30d\|90d&buckets=48` | `buckets[]` (`ts, total, ok, latency`), `uptime`, `latency` |
 
-`kind` vaut `http` (défaut) ou `stremio`. En mode `stremio`, `url` est le manifest de l'addon (`…/manifest.json`) : l'agent vérifie qu'il déclare la ressource `stream`, puis demande les liens de `stremio_id` (IMDb, `tt0111161` par défaut ; `tt0903747:1:1` pour un épisode) et réussit si au moins un lien est renvoyé. `expected_status` et `keyword` sont ignorés ; intervalle minimum 300 s, délai minimum 30 s. Chaque résultat (`last`, `recent[]`) porte alors `links`, le nombre de liens trouvés.
+`kind` vaut `http` (défaut) ou `stremio`. En mode `stremio`, `url` est le manifest de l'addon (`…/manifest.json`, celui installé dans Stremio, configuration comprise). L'agent teste ce que l'addon fournit : les liens de `stremio_id` (IMDb, `tt0111161` par défaut ; `tt0903747:1:1` pour un épisode) s'il déclare `stream` pour ce type et ce préfixe, sinon la fiche (`meta`), sinon le premier catalogue consultable sans paramètre, sinon le manifest seul. `expected_status` et `keyword` sont ignorés ; intervalle minimum 300 s, délai minimum 30 s. Chaque résultat (`last`, `recent[]`) porte `probe` (`stream`, `meta`, `catalog` ou `manifest`) et `links`, le nombre de liens lisibles trouvés. Erreurs explicites : page HTML au lieu du manifest, addon non configuré (`configurationRequired`), aucun lien (avec le message de l'addon s'il en renvoie un), fiche absente, catalogue vide.
 
 ## Notifications, alertes, journal
 
@@ -74,6 +74,18 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 Quota de trafic (`net_quota_tb`, `net_quota_alert`) : alerte `traffic` au seuil choisi (warning) puis à 100 % (critical), une fois par mois et par niveau. Rapport hebdomadaire (`weekly_report`) : notification `report` le dimanche à 19:00 (heure locale), une fois par semaine.
 
 Réparation automatique (réglages `auto_heal`, `auto_heal_all`, `auto_heal_list[]`, `auto_heal_delay` en minutes (1 à 60, 3 par défaut), `auto_heal_max` (1 à 10, 3 par défaut)) : pour les conteneurs retenus, jamais l'agent ni un conteneur ignoré, arrêté depuis l'appli ou visé par une action depuis moins de 2 min, l'agent redémarre (`restart`) un conteneur dont le healthcheck échoue depuis `auto_heal_delay` minutes, et relance (`start`) un conteneur arrêté anormalement (code de sortie autre que 0, 130, 137 et 143, ou OOM) et toujours arrêté 20 s plus tard, quelle que soit sa politique de redémarrage. Au plus `auto_heal_max` réparations par heure glissante et par conteneur ; au-delà, alerte `autoheal` critique « Réparation automatique abandonnée », une seule, close quand le conteneur fonctionne de nouveau. Chaque réparation donne une notification `autoheal` (info), une entrée `autoheal` au journal (`ip` : `agent`, `ua` : `vigie`) et un événement `autoheal` dans la chronologie du conteneur (`detail` : la raison).
+
+## Accès partagés (lecture seule, agent 0.5.0)
+
+| Méthode | Route | |
+| --- | --- | --- |
+| GET | `/api/v1/tokens` | `[{id, label, created, last_used}]` |
+| POST | `/api/v1/tokens` | `{label}` (40 caractères au plus, 20 accès au plus) → 201 `{id, label, token, link, qr_png}` : le jeton (`ro_…`) n'est renvoyé qu'ici ; `link` = `vigie://connect?name=…&url=…&token=…`, `qr_png` = PNG en base64 |
+| DELETE | `/api/v1/tokens/{id}` | révoque l'accès |
+
+Seule l'empreinte SHA-256 des jetons est conservée. `GET /api/v1/info` et le message WebSocket `hello` indiquent `role` : `admin` (token principal) ou `readonly`. Un accès `readonly` n'a droit qu'aux `GET` (et à l'enregistrement de son téléphone, `/api/v1/devices`), sauf `/api/v1/tokens`, `/api/v1/audit`, `/api/v1/channels`, `/api/v1/debrid`, `/api/v1/backups` et les logs des conteneurs : 403 `accès en lecture seule`.
+
+Alerte de surconsommation (réglage `regression_alert`, activé par défaut) : 6 h après une mise à jour (hors 15 premières minutes), la moyenne de chaque conteneur mis à jour est comparée à celle des 24 h précédant la mise à jour ; alerte si la mémoire dépasse ×1,5 et +100 Mio, ou le CPU ×2 et +5 points.
 
 ## Canaux d'alerte et comptes debrid
 
