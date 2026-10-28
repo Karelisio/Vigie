@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Fingerprint
+import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Info
@@ -269,6 +270,13 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
                     else -> "Agent ${i.version} · télécharge la dernière image et redémarre"
                 },
             ) { if (i?.updatesEnabled == true && live.runningJob == null) agentDialog = true }
+        }
+        if (live.v04) {
+            item {
+                Row_(Icons.Rounded.CleaningServices, "Nettoyage du disque", "Images inutilisées, cache de construction") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.CleanupRoute)
+                }
+            }
         }
         item { Row_(Icons.Rounded.Info, "À propos", info?.let { "Agent ${it.version} · ${it.host.hostname}" } ?: "Vigie") { nav.navigate(AboutRoute) } }
     }

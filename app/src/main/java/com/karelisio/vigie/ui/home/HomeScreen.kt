@@ -59,6 +59,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.rounded.Construction
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -162,6 +165,19 @@ fun HomeScreen(nav: NavHostController, vm: HomeViewModel = viewModel()) {
     val servers by vm.servers.collectAsStateWithLifecycle()
     val activeId by vm.activeId.collectAsStateWithLifecycle()
     val oracle by vm.oracle.collectAsStateWithLifecycle()
+    var maintenanceSheet by remember { mutableStateOf(false) }
+    val snackbar = com.karelisio.vigie.ui.navigation.LocalSnackbar.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    fun setMaintenance(minutes: Int) {
+        scope.launch {
+            val msg = runCatching { appContainer.repository.setMaintenance(minutes) }.fold(
+                { if (minutes == 0) "Notifications réactivées" else "Notifications coupées jusqu'à ${Fmt.time(it.maintenanceUntil)}" },
+                { "Échec : ${it.message}" },
+            )
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(msg)
+        }
+    }
 
     RadarRefreshBox(isRefreshing = refreshing, onRefresh = vm::refresh, modifier = Modifier.fillMaxSize()) {
         HomeContent(
@@ -182,7 +198,14 @@ fun HomeScreen(nav: NavHostController, vm: HomeViewModel = viewModel()) {
             },
             onContainers = { nav.navigateTab(ContainersRoute) },
             oracle = oracle,
+            onMaintenance = if (state.v04) ({ maintenanceSheet = true }) else null,
+            onStopMaintenance = { setMaintenance(0) },
+            onCleanup = if (state.v04) ({ nav.navigate(com.karelisio.vigie.ui.navigation.CleanupRoute) }) else null,
         )
+    }
+
+    if (maintenanceSheet) {
+        MaintenanceSheet(state.maintenanceUntil, onPick = { maintenanceSheet = false; setMaintenance(it) }, onDismiss = { maintenanceSheet = false })
     }
 }
 
@@ -200,6 +223,9 @@ internal fun HomeContent(
     onIssue: (Issue) -> Unit,
     onContainers: () -> Unit,
     oracle: com.karelisio.vigie.data.OracleReport? = null,
+    onMaintenance: (() -> Unit)? = null,
+    onStopMaintenance: () -> Unit = {},
+    onCleanup: (() -> Unit)? = null,
 ) {
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 96.dp
     LazyColumn(
@@ -207,8 +233,13 @@ internal fun HomeContent(
         contentPadding = PaddingValues(bottom = bottom),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item(key = "header") { Header(serverName, state, servers, onSwitch, onAdd) }
+        item(key = "header") { Header(serverName, state, servers, onSwitch, onAdd, onMaintenance) }
         item(key = "banner") { ConnectionBanner(state) }
+        if (state.maintenanceUntil > System.currentTimeMillis()) {
+            item(key = "maintenance") {
+                MaintenanceBanner(state.maintenanceUntil, onStopMaintenance, Modifier.padding(horizontal = 16.dp).animateItem())
+            }
+        }
         item(key = "radar") { RadarSection(state) }
         val issues = state.overview?.issues.orEmpty()
         items(issues, key = { "issue-${it.kind}-${it.target}" }) { issue ->
@@ -220,7 +251,7 @@ internal fun HomeContent(
                     .shakeOnAppear(issue.severity == "critical", issue.target),
             ) { onIssue(issue) }
         }
-        item(key = "gauges") { GaugesCard(state, Modifier.padding(horizontal = 16.dp).cascade(0)) }
+        item(key = "gauges") { GaugesCard(state, Modifier.padding(horizontal = 16.dp).cascade(0), onCleanup) }
         item(key = "network") { NetworkCard(state, Modifier.padding(horizontal = 16.dp).cascade(1)) }
         item(key = "facts") { FactsRow(state, Modifier.padding(horizontal = 16.dp).cascade(2)) }
         item(key = "history") {
@@ -238,6 +269,7 @@ private fun Header(
     servers: List<Pair<String, String>>,
     onSwitch: (String) -> Unit,
     onAdd: () -> Unit,
+    onMaintenance: (() -> Unit)?,
 ) {
     var menu by remember { mutableStateOf(false) }
     val haptics = rememberHaptics()
@@ -263,6 +295,16 @@ private fun Header(
                     DropdownMenuItem(text = { Text(n) }, leadingIcon = { Icon(Icons.Rounded.Dns, null) }, onClick = { menu = false; onSwitch(id) })
                 }
                 DropdownMenuItem(text = { Text("Ajouter un serveur…") }, onClick = { menu = false; onAdd() })
+            }
+        }
+        if (onMaintenance != null) {
+            val active = state.maintenanceUntil > System.currentTimeMillis()
+            IconButton(onClick = { haptics.tick(); onMaintenance() }) {
+                Icon(
+                    Icons.Rounded.Construction,
+                    if (active) "Maintenance en cours" else "Mode maintenance",
+                    tint = if (active) Vigie.status.warn else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         LiveChip(state)
@@ -380,7 +422,7 @@ private fun IssueCard(issue: Issue, modifier: Modifier, onClick: () -> Unit) {
 }
 
 @Composable
-private fun GaugesCard(state: LiveState, modifier: Modifier) {
+private fun GaugesCard(state: LiveState, modifier: Modifier, onCleanup: (() -> Unit)? = null) {
     val s = state.system
     val t = state.thresholds
     SectionCard(modifier) {
@@ -395,7 +437,10 @@ private fun GaugesCard(state: LiveState, modifier: Modifier) {
             )
             CircularGauge(
                 value = s?.disk ?: 0.0, label = "Disque", threshold = t.disk,
-                caption = s?.let { "${Fmt.bytes(it.diskUsed)} / ${Fmt.bytes(it.diskTotal)}" }, modifier = Modifier.weight(1f),
+                caption = s?.let { "${Fmt.bytes(it.diskUsed)} / ${Fmt.bytes(it.diskTotal)}" },
+                modifier = Modifier
+                    .weight(1f)
+                    .then(if (onCleanup != null) Modifier.clip(RoundedCornerShape(20.dp)).clickable(onClickLabel = "Nettoyer le disque") { onCleanup() } else Modifier),
             )
         }
     }

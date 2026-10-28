@@ -388,3 +388,25 @@ data class AgentJob(
 
 @Serializable
 data class SelfUpdateResult(val ok: Boolean = false, val error: String? = null, val from: String = "", val ts: Long = 0)
+
+@Serializable
+data class MaintenanceRequest(val minutes: Int)
+
+@Serializable
+data class CleanupCategory(val count: Int = 0, val size: Long = 0)
+
+/** Espace récupérable estimé par l'agent. */
+@Serializable
+data class CleanupPreview(
+    val images: CleanupCategory = CleanupCategory(),
+    val volumes: CleanupCategory = CleanupCategory(),
+    @SerialName("build_cache") val buildCache: CleanupCategory = CleanupCategory(),
+    @SerialName("volumes_supported") val volumesSupported: Boolean = false,
+)
+
+@Serializable
+data class CleanupOptions(
+    val images: Boolean,
+    val volumes: Boolean,
+    @SerialName("build_cache") val buildCache: Boolean,
+)

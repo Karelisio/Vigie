@@ -72,6 +72,17 @@
             </intent-filter>
         </service>
 
+        <service
+            android:name=".tile.MaintenanceTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_maintenance"
+            android:label="@string/tile_maintenance_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".widget.VigieWidgetReceiver"
             android:exported="true"

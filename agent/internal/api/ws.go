@@ -81,6 +81,7 @@ func (s *Server) live(w http.ResponseWriter, r *http.Request) {
 		monitor.Encode("system", s.mon.Snapshot()),
 		monitor.Encode("containers", s.mon.Containers()),
 		monitor.Encode("checks", s.mon.Checks()),
+		monitor.Encode("settings", s.mon.Settings().Get()),
 	}
 	// Opération en cours (reconnexion pendant une mise à jour).
 	for _, j := range s.upd.Jobs() {

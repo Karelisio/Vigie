@@ -40,6 +40,7 @@ type Engine struct {
 	killed   map[string]time.Time
 	set      *settings.Manager
 	quiet    []string // titres des alertes reçues pendant les heures calmes
+	maint    []string // titres des alertes reçues pendant la maintenance
 }
 
 func New(ctx context.Context, cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, log *slog.Logger) *Engine {
@@ -375,6 +376,17 @@ func (e *Engine) dispatch(n Notification, resolved, push bool) {
 	if err := e.st.AddAlert(e.ctx, a); err != nil {
 		e.log.Warn("enregistrement de l'alerte", "erreur", err)
 	}
+	if push && e.set.Get().InMaintenance(time.Now()) {
+		// Maintenance : rien n'est envoyé, un bilan suit la fin de la maintenance.
+		push = false
+		if !resolved {
+			e.mu.Lock()
+			if len(e.maint) < 50 {
+				e.maint = append(e.maint, n.Title)
+			}
+			e.mu.Unlock()
+		}
+	}
 	if push && e.set.Get().InQuietHours(time.Now()) {
 		// Heures calmes : pas de notification, un résumé sera envoyé à la fin.
 		push = false
@@ -570,6 +582,7 @@ func (e *Engine) periodic() {
 		case <-e.ctx.Done():
 			return
 		case now := <-minute.C:
+			e.flushMaintenance(now)
 			e.flushQuiet(now)
 			if now.After(nextOracle) {
 				nextOracle = now.Add(time.Hour)
@@ -577,6 +590,29 @@ func (e *Engine) periodic() {
 			}
 		}
 	}
+}
+
+// flushMaintenance envoie le bilan des alertes survenues pendant la maintenance, une fois celle-ci finie.
+func (e *Engine) flushMaintenance(now time.Time) {
+	if e.set.Get().InMaintenance(now) {
+		return
+	}
+	e.mu.Lock()
+	missed := e.maint
+	e.maint = nil
+	e.mu.Unlock()
+	if len(missed) == 0 {
+		return
+	}
+	body := strings.Join(missed, " · ")
+	if len(missed) > 4 {
+		body = strings.Join(missed[:4], " · ") + fmt.Sprintf(" · et %d autre(s)", len(missed)-4)
+	}
+	e.dispatch(Notification{
+		Kind: "summary", Severity: "warning", Target: "maintenance",
+		Title: fmt.Sprintf("Fin de maintenance : %d alerte(s)", len(missed)),
+		Body:  body,
+	}, false, true)
 }
 
 func (e *Engine) flushQuiet(now time.Time) {

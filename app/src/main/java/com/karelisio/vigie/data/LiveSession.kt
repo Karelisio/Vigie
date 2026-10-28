@@ -38,11 +38,16 @@ data class LiveState(
     val agentVersion: String = "",
     val updatesEnabled: Boolean = false,
     val stackActions: Boolean = false,
+    /** Fin du mode maintenance (ms), 0 si inactif. */
+    val maintenanceUntil: Long = 0,
     /** Opérations de l'agent, la plus récente en premier. */
     val jobs: List<AgentJob> = emptyList(),
 ) {
     /** Opération en cours (une seule à la fois côté agent). */
     val runningJob: AgentJob? get() = jobs.firstOrNull { !it.done }
+
+    /** Fonctionnalités de l'agent 0.4.0 (maintenance, nettoyage…). */
+    val v04: Boolean get() = versionAtLeast(agentVersion, 0, 4)
     val isLive get() = connection == Connection.Live
     val status get() = overview?.status ?: "unknown"
 }
@@ -192,7 +197,7 @@ class LiveSession(
             }
             "settings" -> {
                 val s = VigieJson.decodeFromJsonElement(AgentSettings.serializer(), data)
-                _state.update { it.copy(thresholds = Thresholds(s.cpu, s.ram, s.disk)) }
+                _state.update { it.copy(thresholds = Thresholds(s.cpu, s.ram, s.disk), maintenanceUntil = s.maintenanceUntil) }
             }
             "job" -> patchJob(VigieJson.decodeFromJsonElement(AgentJob.serializer(), data))
             "event" -> _events.tryEmit(LiveEvent.Docker(VigieJson.decodeFromJsonElement(DockerEvent.serializer(), data)))
@@ -210,6 +215,8 @@ class LiveSession(
     }
 
     fun setChecks(list: List<CheckStatus>) = _state.update { it.copy(checks = list) }
+
+    fun patchMaintenance(until: Long) = _state.update { it.copy(maintenanceUntil = until) }
 
     fun emit(e: LiveEvent) {
         _events.tryEmit(e)

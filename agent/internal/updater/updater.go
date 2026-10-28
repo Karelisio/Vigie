@@ -121,7 +121,7 @@ func (m *Manager) Jobs() []Job {
 
 func (m *Manager) start(kind, action, target string, run func(ctx context.Context, j *Job) error) (Job, error) {
 	// Redémarrer, démarrer ou arrêter une stack reste possible même sans les mises à jour d'images.
-	if (action == "update" || action == "pull") && !m.opt.Enabled {
+	if (action == "update" || action == "pull" || action == "cleanup") && !m.opt.Enabled {
 		return Job{}, ErrDisabled
 	}
 	m.mu.Lock()
@@ -218,6 +218,18 @@ func (m *Manager) note(name, action string) {
 	if m.hooks.NoteAction != nil {
 		m.hooks.NoteAction(name, action)
 	}
+}
+
+// Run exécute une opération quelconque (ex. nettoyage) sous le même verrou que les mises à jour.
+// fn renvoie le message de bilan affiché à la fin.
+func (m *Manager) Run(kind, action, target string, fn func(ctx context.Context, progress func(p float64, msg string)) (string, error)) (Job, error) {
+	return m.start(kind, action, target, func(ctx context.Context, j *Job) error {
+		msg, err := fn(ctx, func(p float64, s string) { m.set(j, "running", p, s) })
+		if err == nil {
+			m.set(j, "done", 1, msg)
+		}
+		return err
+	})
 }
 
 // UpdateContainer télécharge l'image du conteneur puis le recrée (ou se contente du téléchargement).
@@ -875,6 +887,11 @@ func (j Job) Title() string {
 			return "Mises à jour terminées"
 		}
 		return "Mises à jour : échec"
+	case "cleanup":
+		if j.OK {
+			return "Nettoyage terminé"
+		}
+		return "Échec du nettoyage"
 	}
 	if !j.OK {
 		return "Échec de la mise à jour de " + j.Target

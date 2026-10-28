@@ -84,6 +84,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/containers/{id}/events", s.containerEvents)
 	mux.HandleFunc("POST /api/v1/containers/{id}/mute", s.muteContainer)
 
+	mux.HandleFunc("POST /api/v1/maintenance", s.maintenance)
+	mux.HandleFunc("GET /api/v1/cleanup", s.cleanupPreview)
+	mux.HandleFunc("POST /api/v1/cleanup", s.cleanupRun)
 	mux.HandleFunc("GET /api/v1/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", s.putSettings)
 	mux.HandleFunc("GET /api/v1/oracle", s.oracleReport)

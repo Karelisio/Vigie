@@ -242,6 +242,15 @@ class Repository(
 
     suspend fun updateAll(): AgentJob = started(api.postEmpty(requireServer(), "/api/v1/updates/apply"))
 
+    /** Coupe les notifications pendant [minutes] (0 : reprise immédiate). */
+    suspend fun setMaintenance(minutes: Int): AgentSettings =
+        api.post<MaintenanceRequest, AgentSettings>(requireServer(), "/api/v1/maintenance", MaintenanceRequest(minutes))
+            .also { activeSession.value?.patchMaintenance(it.maintenanceUntil) }
+
+    suspend fun cleanupPreview(): CleanupPreview = api.get(requireServer(), "/api/v1/cleanup")
+
+    suspend fun cleanup(options: CleanupOptions): AgentJob = started(api.post(requireServer(), "/api/v1/cleanup", options))
+
     suspend fun updateAgent(): AgentJob = started(api.postEmpty(requireServer(), "/api/v1/agent/update"))
 
     suspend fun alerts(limit: Int = 100): List<Alert> = api.get(requireServer(), "/api/v1/alerts?limit=$limit")

@@ -237,3 +237,64 @@ func (c *Client) StopWait(ctx context.Context, id string, timeout time.Duration)
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return resp.Body.Close()
 }
+
+// DiskUsage est un sous-ensemble de GET /system/df.
+type DiskUsage struct {
+	Images []struct {
+		ID         string `json:"Id"`
+		Size       int64  `json:"Size"`
+		SharedSize int64  `json:"SharedSize"`
+		Containers int64  `json:"Containers"`
+	} `json:"Images"`
+	Volumes []struct {
+		Name      string            `json:"Name"`
+		Labels    map[string]string `json:"Labels"`
+		UsageData *struct {
+			Size     int64 `json:"Size"`
+			RefCount int64 `json:"RefCount"`
+		} `json:"UsageData"`
+	} `json:"Volumes"`
+	BuildCache []struct {
+		Size  int64 `json:"Size"`
+		InUse bool  `json:"InUse"`
+	} `json:"BuildCache"`
+}
+
+// DiskUsage peut être long (taille des volumes) : pas de délai côté client.
+func (c *Client) DiskUsage(ctx context.Context) (*DiskUsage, error) {
+	resp, err := c.call(ctx, c.stream, http.MethodGet, "/system/df", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out DiskUsage
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Prune supprime les éléments inutilisés d'un type (images, volumes, build) et renvoie l'espace libéré.
+func (c *Client) Prune(ctx context.Context, kind string, q url.Values) (int64, error) {
+	resp, err := c.call(ctx, c.stream, http.MethodPost, "/"+kind+"/prune", q, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		SpaceReclaimed int64 `json:"SpaceReclaimed"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, err
+	}
+	return out.SpaceReclaimed, nil
+}
+
+// AtLeast indique si l'API du démon est au moins major.minor.
+func (v *Version) AtLeast(major, minor int) bool {
+	var a, b int
+	if _, err := fmt.Sscanf(v.APIVersion, "%d.%d", &a, &b); err != nil {
+		return false
+	}
+	return a > major || (a == major && b >= minor)
+}
