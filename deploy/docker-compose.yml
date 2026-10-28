@@ -1,0 +1,73 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Vigie — agent de supervision
+#  À coller tel quel dans Dockhand : Stacks › Créer › coller ce fichier › Déployer.
+#  Ensuite : Logs du conteneur « vigie-agent » → QR code à scanner dans l'appli.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  vigie-agent:
+    image: ghcr.io/karelisio/vigie-agent:latest
+    container_name: vigie-agent
+    restart: unless-stopped
+    environment:
+      VIGIE_SERVER_NAME: "VPS Oracle"
+      VIGIE_PUBLIC_URL: "https://vigie.15122000.xyz"
+
+      # Laisser vide : un token aléatoire de 64 caractères est généré au premier
+      # démarrage, conservé dans le volume et affiché (avec le QR code) dans les logs.
+      # Pour fixer le tien : au moins 32 caractères aléatoires.
+      VIGIE_TOKEN: ""
+
+      # Notifications push : contenu du JSON du compte de service Firebase encodé
+      # en base64 (voir README, étape 5). Vide = pas de push (le reste fonctionne).
+      FCM_SERVICE_ACCOUNT_B64: ""
+
+      # Checks HTTP ajoutés au premier démarrage (modifiables ensuite dans l'appli).
+      # Format : Nom | URL | code HTTP attendu | mot-clé attendu (facultatif)
+      VIGIE_CHECKS: |
+        AIOStreams  | https://aiostreams.15122000.xyz/stremio/manifest.json | 200 | "id"
+        Comet       | https://comet.15122000.xyz/manifest.json              | 200 | "id"
+        AIOMetadata | https://aiometadata.15122000.xyz/manifest.json        | 200 | "id"
+
+      # Seuils d'alerte (%) et durée de dépassement avant notification.
+      VIGIE_ALERT_CPU: "90"
+      VIGIE_ALERT_RAM: "90"
+      VIGIE_ALERT_DISK: "90"
+      VIGIE_ALERT_DURATION: "5m"
+
+      # Conteneurs à ne jamais signaler (noms séparés par des virgules).
+      VIGIE_IGNORE: ""
+
+      TZ: "Europe/Paris"
+    volumes:
+      # API Docker : lecture + start/stop/restart (rien d'autre n'est exposé par l'agent).
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Métriques de l'hôte, en lecture seule.
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      # Occupation disque de l'hôte, en lecture seule.
+      - /:/host/root:ro
+      # Base SQLite (historique 7 jours), token, réglages.
+      - vigie-data:/data
+    networks:
+      - arr_backend
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 192m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+networks:
+  arr_backend:
+    external: true
+
+volumes:
+  vigie-data:

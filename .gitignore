@@ -1,0 +1,28 @@
+# Secrets — ne jamais committer
+*.jks
+*.keystore
+keystore.properties
+google-services.json
+*service-account*.json
+.env
+.env.*
+
+# Android / Gradle
+.gradle/
+build/
+/app/build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Agent
+/agent/vigie-agent
+/agent/data/
+
+# Divers
+.DS_Store
+Thumbs.db
