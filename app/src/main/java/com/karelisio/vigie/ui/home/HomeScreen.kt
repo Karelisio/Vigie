@@ -222,6 +222,7 @@ fun HomeScreen(nav: NavHostController, vm: HomeViewModel = viewModel()) {
     val debrid by vm.debrid.collectAsStateWithLifecycle()
     // Version de l'agent connue après la connexion : les comptes debrid sont chargés à ce moment-là.
     LaunchedEffect(state.agentVersion, activeId) { vm.loadDebrid() }
+    val diskHint = com.karelisio.vigie.ui.storage.rememberDiskHint(state.agentVersion, activeId)
 
     RadarRefreshBox(isRefreshing = refreshing, onRefresh = vm::refresh, modifier = Modifier.fillMaxSize()) {
         HomeContent(
@@ -252,6 +253,8 @@ fun HomeScreen(nav: NavHostController, vm: HomeViewModel = viewModel()) {
             onConsumer = { name -> nav.navigate(ContainerRoute(state.containers.firstOrNull { it.name == name }?.id ?: name, name)) },
             debrid = debrid,
             onDebrid = { nav.navigate(com.karelisio.vigie.ui.navigation.DebridRoute) },
+            diskHint = diskHint,
+            onStorage = { nav.navigate(com.karelisio.vigie.ui.navigation.StorageRoute) },
         )
     }
 
@@ -284,6 +287,9 @@ internal fun HomeContent(
     onConsumer: (String) -> Unit = {},
     debrid: DebridState? = null,
     onDebrid: () -> Unit = {},
+    /** Prévision du disque sous 60 jours, agent 0.6.0 et plus. */
+    diskHint: com.karelisio.vigie.ui.storage.DiskForecastHint? = null,
+    onStorage: () -> Unit = {},
 ) {
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 96.dp
     LazyColumn(
@@ -309,7 +315,7 @@ internal fun HomeContent(
                     .shakeOnAppear(issue.severity == "critical", issue.target),
             ) { onIssue(issue) }
         }
-        item(key = "gauges") { GaugesCard(state, Modifier.padding(horizontal = 16.dp).cascade(0), onCleanup) }
+        item(key = "gauges") { GaugesCard(state, Modifier.padding(horizontal = 16.dp).cascade(0), onCleanup, diskHint, onStorage) }
         item(key = "network") { NetworkCard(state, Modifier.padding(horizontal = 16.dp).cascade(1)) }
         item(key = "facts") { FactsRow(state, Modifier.padding(horizontal = 16.dp).cascade(2)) }
         item(key = "history") {
@@ -489,7 +495,13 @@ private fun IssueCard(issue: Issue, modifier: Modifier, onClick: () -> Unit) {
 }
 
 @Composable
-private fun GaugesCard(state: LiveState, modifier: Modifier, onCleanup: (() -> Unit)? = null) {
+private fun GaugesCard(
+    state: LiveState,
+    modifier: Modifier,
+    onCleanup: (() -> Unit)? = null,
+    diskHint: com.karelisio.vigie.ui.storage.DiskForecastHint? = null,
+    onStorage: () -> Unit = {},
+) {
     val s = state.system
     val t = state.thresholds
     SectionCard(modifier) {
@@ -509,6 +521,10 @@ private fun GaugesCard(state: LiveState, modifier: Modifier, onCleanup: (() -> U
                     .weight(1f)
                     .then(if (onCleanup != null) Modifier.clip(RoundedCornerShape(20.dp)).clickable(onClickLabel = "Nettoyer le disque") { onCleanup() } else Modifier),
             )
+        }
+        if (diskHint != null) {
+            Spacer(Modifier.height(12.dp))
+            com.karelisio.vigie.ui.storage.DiskHint(diskHint, onStorage)
         }
     }
 }

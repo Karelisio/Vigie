@@ -28,6 +28,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/qr"
 	"github.com/karelisio/vigie/agent/internal/regression"
 	"github.com/karelisio/vigie/agent/internal/settings"
+	"github.com/karelisio/vigie/agent/internal/storage"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/system"
 	"github.com/karelisio/vigie/agent/internal/traffic"
@@ -184,6 +185,11 @@ func run(log *slog.Logger) error {
 	apiSrv.Debrid = dm
 	bk := backup.New(st, dk, upd, log, backup.Options{DataDir: cfg.DataDir, SelfID: mon.SelfID(), NoteAction: mon.NoteAction})
 	apiSrv.Backups = bk
+	// Stockage : prévision du disque (toutes les heures) et taille des volumes (toutes les 6 h).
+	sto := storage.New(ctx, st, dk, mon.Snapshot, set.Get, log)
+	sto.OnForecast = eng.OnDiskForecast
+	sto.OnVolumes = eng.OnVolumes
+	apiSrv.Storage = sto
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           apiSrv.Handler(),
@@ -201,6 +207,7 @@ func run(log *slog.Logger) error {
 	go heal.Run(ctx)
 	go dm.Run(ctx)
 	go bk.Run(ctx)
+	go sto.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

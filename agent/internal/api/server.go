@@ -21,6 +21,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/docker"
 	"github.com/karelisio/vigie/agent/internal/monitor"
 	"github.com/karelisio/vigie/agent/internal/oracle"
+	"github.com/karelisio/vigie/agent/internal/storage"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/updater"
 )
@@ -47,6 +48,8 @@ type Server struct {
 	Debrid *debrid.Manager
 	// Backups gère les sauvegardes (renseigné après New).
 	Backups *backup.Service
+	// Storage suit la prévision du disque et la taille des volumes (renseigné après New).
+	Storage *storage.Service
 }
 
 func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, upd *updater.Manager, log *slog.Logger, version string) *Server {
@@ -114,6 +117,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/traffic", s.trafficReport)
 	mux.HandleFunc("GET /api/v1/top", s.topConsumers)
 	mux.HandleFunc("GET /api/v1/report", s.weeklyReport)
+	mux.HandleFunc("GET /api/v1/storage", s.getStorage)
+	mux.HandleFunc("POST /api/v1/storage/refresh", s.refreshStorage)
 
 	mux.HandleFunc("GET /api/v1/alerts", s.listAlerts)
 	mux.HandleFunc("GET /api/v1/logwatch", s.logWatch)

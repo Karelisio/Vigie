@@ -143,6 +143,28 @@ Toutes les routes sont sous `/api/v1/backups`.
 - Planification (`schedule`) : chaque jour à `time`, une fois par jour au plus ; si une opération est en cours, 3 nouveaux essais à 10 min d'intervalle.
 - Alertes : un échec envoie l'alerte `backup` (critical) même appli ouverte ; la réussite suivante la résout. Une réussite sans échec préalable n'est notifiée (`job`) que si l'appli est fermée.
 
+## Stockage (agent 0.6.0)
+
+| Méthode | Route | Réponse |
+| --- | --- | --- |
+| GET | `/api/v1/storage` | prévision du disque et dernier calcul des volumes (permis en lecture seule) |
+| POST | `/api/v1/storage/refresh` | relance le calcul des volumes en arrière-plan. 202 : même réponse que `GET`, avec `refreshing: true` (un calcul déjà en cours n'est pas relancé) ; 429 (`Retry-After`) si le dernier a commencé il y a moins d'une minute |
+
+Réponse :
+
+- `disk` : `mount`, `total`, `used`, `free` (octets), `status` (`ok` : croissance nette, `stable` : pas de croissance significative ou baisse, `insufficient` : moins de 48 h de mesures), `trend_per_day` (octets par jour, `null` si `insufficient`), `days_left` (jours avant d'être plein au rythme actuel, `null` sauf `ok`), `history_hours` (recul couvert), `cleanups` (nettoyages écartés), `points[]` (`ts, used` : un point par heure sur 7 jours, puis l'instant présent).
+- `volumes[]` (volumes nommés, du plus gros au plus petit) : `name`, `project` (label compose, absent sinon), `size`, `containers[]` (conteneurs qui le montent, même arrêtés), `growth_day` et `growth_week` (croissance ramenée à 24 h et à 7 jours, `null` sans mesure assez ancienne : 18 à 30 h, 5 à 8 jours), `fast` (`growth_day` ≥ `fast_growth`), `history[]` (`ts, size`, 7 jours, une mesure par heure au plus).
+- `anonymous`, `images`, `build_cache` : `{count, size}` (images : place réelle des couches, cache : hors éléments partagés). `fast_growth` : seuil de croissance quotidienne (`volume_growth_gb`, 5 Go si l'alerte est désactivée). `volumes_at` : dernier calcul des volumes (ms, 0 avant le premier), `refreshing` : calcul en cours, `error` : échec du dernier calcul (les tailles précédentes restent), `computed_at`.
+
+Prévision : à partir de l'historique système (occupation en %, tranches de 15 min, 7 derniers jours) convertie avec la taille actuelle du disque, réduite à un point par heure (médiane), pente de Theil-Sen (médiane des pentes entre tous les couples de points). Une baisse franche (≥ 512 Mio ou 0,5 % du disque en moins d'une heure, durable, qui ne défait pas une hausse brutale des 48 h précédentes) est un nettoyage : la suite de la série est relevée d'autant ; au-delà de 2 sur la période, les baisses font partie du rythme normal et rien n'est écarté. Croissance retenue si elle dépasse sur la période 256 Mio, 0,2 % du disque et deux fois le bruit (écart absolu médian autour de la droite) ; plus de 10 ans avant d'être plein : `stable`.
+
+Volumes : `GET /system/df` (avec `type=image&type=volume&type=build-cache` à partir de Docker 23, pour ne pas mesurer les conteneurs) peu après le démarrage si le dernier calcul a plus de 6 h, puis toutes les 6 h, jamais deux à la fois, 10 min au plus. Volumes anonymes (label `com.docker.volume.anonymous` ou nom de 64 caractères hexadécimaux) comptés à part, volumes de taille inconnue (pilote distant) ignorés. Historique `volume_sizes` en base, 30 jours.
+
+Alertes `storage` (réglages `disk_forecast_days`, 14 par défaut, 0 à 90, 0 : aucune ; `volume_growth_gb`, 5 par défaut, 0 à 1000, 0 : aucune) :
+
+- disque plein dans moins de `disk_forecast_days` jours (évalué toutes les heures) : « Disque plein dans ~N jours » (warning, critical à 3 jours ou moins), « Au rythme actuel (+X Go/jour), le disque sera plein dans ~N jours. » avec le volume qui grossit le plus s'il compte pour au moins un quart de la croissance ; une fois, puis rappel tous les 3 jours au plus tant que la prévision reste sous le préavis ; résolue (« Disque : prévision rassurante ») quand elle repasse au-dessus d'une fois et demie le préavis (et d'au moins 2 jours de plus) ou que la croissance s'arrête. Mémorisée en base (redémarrages).
+- volume qui grossit de plus de `volume_growth_gb` Go par jour (`growth_day`) : « Le volume X grossit vite », « +Y Go en 24 h, Z au total. Utilisé par … », une fois par jour au plus et par volume (23 h d'écart minimum), même après un redémarrage.
+
 ## Temps réel
 
 `WS /api/v1/ws` envoie à la connexion `hello`, `overview`, `system`, `containers`, `checks`, `settings` (et l'opération en cours éventuelle), puis :

@@ -82,6 +82,9 @@ var migrations = []string{
 	`ALTER TABLE checks ADD COLUMN stremio_id TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE check_results ADD COLUMN links INTEGER`,
 	`ALTER TABLE check_results ADD COLUMN probe TEXT`,
+	// 0.6 : taille des volumes Docker (toutes les 6 h, 30 jours).
+	`CREATE TABLE IF NOT EXISTS volume_sizes (name TEXT NOT NULL, ts INTEGER NOT NULL, size INTEGER NOT NULL, PRIMARY KEY (name, ts))`,
+	`CREATE INDEX IF NOT EXISTS volume_sizes_ts ON volume_sizes (ts)`,
 }
 
 func Open(dir string) (*Store, error) {
