@@ -118,6 +118,7 @@ keytool -genkeypair -v -keystore vigie.jks -alias vigie -keyalg RSA -keysize 409
 ## 7. Publier une version
 
 Au choix :
+- modifie le fichier [`VERSION`](VERSION) (ex. `1.2.0`) et pousse : le tag `v1.2.0` est créé automatiquement ;
 - GitHub › **Releases** › **Draft a new release** › *Choose a tag* › `v1.2.0` › **Publish** ;
 - ou GitHub › **Actions** › **Release** › **Run workflow** › version `1.2.0` (le tag est créé automatiquement).
 

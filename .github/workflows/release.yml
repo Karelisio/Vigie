@@ -1,12 +1,15 @@
 name: Release
 
 # Une version = un tag vX.Y.Z → APK signé + GitHub Release (changelog) + image de l'agent X.Y.Z et latest.
-# Deux façons de publier :
+# Trois façons de publier :
+#   - modifier le fichier VERSION (ex. 0.2.0) et pousser : le tag est créé ici s'il n'existe pas ;
 #   - créer une release / un tag vX.Y.Z sur GitHub ;
-#   - lancer ce workflow à la main (Actions › Release › Run workflow) avec la version : le tag est créé ici.
+#   - lancer ce workflow à la main (Actions › Release › Run workflow) avec la version.
 on:
   push:
     tags: ["v*"]
+    branches: ["**"]
+    paths: ["VERSION"]
   workflow_dispatch:
     inputs:
       version:
@@ -27,18 +30,28 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
+      skip: ${{ steps.v.outputs.skip }}
     steps:
       - uses: actions/checkout@v5
       - id: v
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then V="${INPUT_VERSION#v}"; else V="${GITHUB_REF_NAME#v}"; fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then V="${INPUT_VERSION#v}"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then V="${GITHUB_REF_NAME#v}"
+          else V="$(tr -d '[:space:]' < VERSION)"; V="${V#v}"; fi
           if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::Version invalide : $V (attendu X.Y.Z)"; exit 1; fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "tag=v$V" >> "$GITHUB_OUTPUT"
+          SKIP=false
+          # Fichier VERSION modifié sans changement de numéro : rien à publier.
+          if [ "$GITHUB_REF_TYPE" = "branch" ] && [ "$GITHUB_EVENT_NAME" = "push" ] && git ls-remote --exit-code --tags origin "refs/tags/v$V" >/dev/null; then
+            echo "::notice::La version $V est déjà publiée."
+            SKIP=true
+          fi
+          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
       - name: Création du tag
-        if: github.event_name == 'workflow_dispatch'
+        if: github.ref_type != 'tag' && steps.v.outputs.skip != 'true'
         env:
           TAG: ${{ steps.v.outputs.tag }}
         run: |
@@ -53,6 +66,7 @@ jobs:
 
   image:
     needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -86,6 +100,7 @@ jobs:
 
   apk:
     needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
