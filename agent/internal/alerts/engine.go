@@ -189,6 +189,13 @@ func (e *Engine) OnEvent(ev docker.Event) {
 				Body:  "Son healthcheck échoue.",
 			})
 		case "healthy":
+			// Ne signale un retour à la normale que si une alerte était en cours.
+			e.mu.Lock()
+			active := e.active[key]
+			e.mu.Unlock()
+			if !active {
+				return
+			}
 			e.resolve(key, Notification{
 				Kind: "container", Severity: "info", Target: name, ContainerID: ev.Actor.ID,
 				Title: fmt.Sprintf("%s de nouveau en bonne santé", name),

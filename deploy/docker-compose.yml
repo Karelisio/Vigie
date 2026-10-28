@@ -26,7 +26,7 @@ services:
       VIGIE_CHECKS: |
         AIOStreams  | https://aiostreams.15122000.xyz/stremio/manifest.json | 200 | "id"
         Comet       | https://comet.15122000.xyz/manifest.json              | 200 | "id"
-        AIOMetadata | https://aiometadata.15122000.xyz/manifest.json        | 200 | "id"
+        AIOMetadata | https://aiometadata.15122000.xyz/manifest.json        | 200
 
       # Seuils d'alerte (%) et durée de dépassement avant notification.
       VIGIE_ALERT_CPU: "90"
