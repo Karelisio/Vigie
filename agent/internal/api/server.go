@@ -39,6 +39,8 @@ type Server struct {
 	shared    *tokenSet
 	// LogWatch suit les alertes sur les logs (renseigné après New).
 	LogWatch LogWatcher
+	// AutoHeal répare automatiquement les conteneurs (renseigné après New).
+	AutoHeal AutoHealer
 }
 
 func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, upd *updater.Manager, log *slog.Logger, version string) *Server {
@@ -106,6 +108,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/v1/alerts", s.listAlerts)
 	mux.HandleFunc("GET /api/v1/logwatch", s.logWatch)
+	mux.HandleFunc("GET /api/v1/autoheal", s.autoHeal)
 	mux.HandleFunc("GET /api/v1/audit", s.audit)
 
 	mux.HandleFunc("GET /api/v1/ws", s.live)

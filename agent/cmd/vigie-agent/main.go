@@ -17,6 +17,7 @@ import (
 
 	"github.com/karelisio/vigie/agent/internal/alerts"
 	"github.com/karelisio/vigie/agent/internal/api"
+	"github.com/karelisio/vigie/agent/internal/autoheal"
 	"github.com/karelisio/vigie/agent/internal/checks"
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/docker"
@@ -111,6 +112,14 @@ func run(log *slog.Logger) error {
 	// Consommation avant / après chaque mise à jour.
 	reg := regression.New(st, set.Get, eng.NotifyRegression, log)
 
+	// Réparation automatique : healthcheck en échec depuis le délai choisi, ou arrêt anormal.
+	heal := autoheal.New(dk, mon, st, set.Get, eng.NotifyAutoHeal, log)
+	healEvent := mon.OnEvent
+	mon.OnEvent = func(ev docker.Event) {
+		healEvent(ev)
+		heal.OnEvent(ev)
+	}
+
 	upd := updater.New(dk, log, updater.Hooks{
 		NoteAction:   mon.NoteAction,
 		SetTransient: mon.SetTransient,
@@ -152,6 +161,7 @@ func run(log *slog.Logger) error {
 
 	apiSrv := api.New(cfg, mon, dk, st, runner, eng, upd, log, version)
 	apiSrv.LogWatch = lw
+	apiSrv.AutoHeal = heal
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           apiSrv.Handler(),
@@ -166,6 +176,7 @@ func run(log *slog.Logger) error {
 	go runner.Run(ctx)
 	go updater.NewNightly(upd, mon, st, log).Run(ctx)
 	go lw.Run(ctx)
+	go heal.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

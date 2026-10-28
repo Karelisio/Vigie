@@ -311,6 +311,7 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
             }
             Spacer(Modifier.height(12.dp))
         }
+        if (!state.readOnly) AutoHealCard(c, state.agentVersion, Modifier.padding(horizontal = 16.dp).cascade(4))
         SectionCard(Modifier.padding(horizontal = 16.dp).cascade(4), title = "Détails") {
             Info("Image", c.image)
             if (c.updateAvailable) {

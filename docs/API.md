@@ -55,6 +55,7 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 | GET | `/api/v1/alerts?limit=50` | historique des alertes (30 jours) |
 | GET | `/api/v1/logwatch` | alertes sur les logs (`log_rules` des réglages) : `[{rule_id, container, active, matches_24h, last_match, last_line}]` ; `active` : logs du conteneur en cours de lecture |
 | GET | `/api/v1/audit?limit=100` | journal des actions (90 jours) |
+| GET | `/api/v1/autoheal` | réparations automatiques des dernières 24 h (50 au plus, la plus récente en premier) : `[{ts, container, reason, action, ok, error?}]` ; `reason` : `unhealthy`, `down` ou `oom` ; `action` : `restart` ou `start` ; `ok` : conteneur revenu (en marche, et en bonne santé s'il a un healthcheck) |
 | POST | `/api/v1/stacks/{projet}/{action}` | `action` : `update`, `pull`, `restart`, `start`, `stop` sur tous les conteneurs du projet compose (202 : `job`) |
 | POST | `/api/v1/updates/apply` | met à jour tous les conteneurs qui ont une nouvelle image (202 : `job`) |
 | POST | `/api/v1/agent/update` | met à jour l'agent (202 : `job`) |
@@ -71,6 +72,8 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 | GET | `/api/v1/report?days=7` | rapport de la période (1 à 7 jours) : `services` (`uptime` moyen, `worst`, `list[]`), `incidents` (`total`, `by_kind[]` : `kind, label, count`, `recent[]`), `containers` (`crashes`, `restarts`, `list[]`), `updates[]`, `disk` (`pct, used, total, change`), `traffic` (`rx, tx, month_tx, quota, month_pct`, absent sans historique), `oracle` (instances Oracle seulement) |
 
 Quota de trafic (`net_quota_tb`, `net_quota_alert`) : alerte `traffic` au seuil choisi (warning) puis à 100 % (critical), une fois par mois et par niveau. Rapport hebdomadaire (`weekly_report`) : notification `report` le dimanche à 19:00 (heure locale), une fois par semaine.
+
+Réparation automatique (réglages `auto_heal`, `auto_heal_all`, `auto_heal_list[]`, `auto_heal_delay` en minutes (1 à 60, 3 par défaut), `auto_heal_max` (1 à 10, 3 par défaut)) : pour les conteneurs retenus, jamais l'agent ni un conteneur ignoré, arrêté depuis l'appli ou visé par une action depuis moins de 2 min, l'agent redémarre (`restart`) un conteneur dont le healthcheck échoue depuis `auto_heal_delay` minutes, et relance (`start`) un conteneur arrêté anormalement (code de sortie autre que 0, 130, 137 et 143, ou OOM) et toujours arrêté 20 s plus tard, quelle que soit sa politique de redémarrage. Au plus `auto_heal_max` réparations par heure glissante et par conteneur ; au-delà, alerte `autoheal` critique « Réparation automatique abandonnée », une seule, close quand le conteneur fonctionne de nouveau. Chaque réparation donne une notification `autoheal` (info), une entrée `autoheal` au journal (`ip` : `agent`, `ua` : `vigie`) et un événement `autoheal` dans la chronologie du conteneur (`detail` : la raison).
 
 ## Temps réel
 

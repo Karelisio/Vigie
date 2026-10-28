@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.karelisio.vigie.data.Fmt
 import com.karelisio.vigie.data.TimelineEvent
+import com.karelisio.vigie.data.autoHealReason
 import com.karelisio.vigie.ui.components.SectionCard
 import com.karelisio.vigie.ui.theme.Vigie
 
@@ -66,6 +67,11 @@ private fun summarize(c: List<TimelineEvent>): TimelineGroup {
         return g("Échec de « ${verb(byVigie.action)} »$fromVigie", "critical", byVigie.detail)
     }
     return when {
+        // Réparation automatique par l'agent : elle explique les arrêts et démarrages qui l'entourent.
+        "autoheal" in actions -> {
+            val reason = c.first { it.action == "autoheal" }.detail
+            g("Réparé automatiquement (${autoHealReason(reason)})", "warning", if (reason == "down" && exit != null) "code $exit" else count)
+        }
         "oom" in actions -> g("Tué : mémoire saturée", "critical")
         "health" in actions -> when (c.first().detail) {
             "healthy" -> g("Healthcheck OK", "ok")

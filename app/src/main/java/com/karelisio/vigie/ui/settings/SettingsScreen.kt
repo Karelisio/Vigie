@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Fingerprint
+import androidx.compose.material.icons.rounded.Healing
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material.icons.rounded.Visibility
@@ -302,6 +303,13 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
         if (!live.readOnly) item {
             Row_(Icons.Rounded.NightsStay, "Mises à jour automatiques", "Installer les nouvelles images pendant la nuit") {
                 nav.navigate(com.karelisio.vigie.ui.navigation.AutoUpdateRoute)
+            }
+        }
+        if (versionAtLeast(live.agentVersion, 0, 5) && !live.readOnly) {
+            item {
+                Row_(Icons.Rounded.Healing, "Réparation automatique", "Redémarrer un conteneur en mauvaise santé ou planté") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.AutoHealRoute)
+                }
             }
         }
         if (live.v04 && !live.readOnly) {

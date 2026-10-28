@@ -132,6 +132,7 @@ private fun actionLabel(a: String) = when (a) {
     "start" -> "Démarrage"
     "stop" -> "Arrêt"
     "restart" -> "Redémarrage"
+    "autoheal" -> "Réparation automatique"
     "check.create" -> "Check ajouté"
     "check.update" -> "Check modifié"
     "check.delete" -> "Check supprimé"

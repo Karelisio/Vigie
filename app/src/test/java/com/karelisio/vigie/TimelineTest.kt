@@ -33,6 +33,23 @@ class TimelineTest {
     }
 
     @Test
+    fun autoHeal() {
+        val restart = groupTimeline(
+            listOf(
+                ev(5_000, "restart"), ev(4_500, "start"), ev(4_000, "stop"), ev(3_900, "die", "143"),
+                ev(3_000, "autoheal", "unhealthy"), ev(1_000, "health", "unhealthy"),
+            ),
+        )
+        assertEquals(listOf("Réparé automatiquement (healthcheck en échec)", "Healthcheck en échec"), restart.map { it.title })
+        assertEquals("warning", restart[0].tone)
+        assertEquals("5 événements", restart[0].detail)
+
+        val crash = groupTimeline(listOf(ev(30_000, "start"), ev(25_000, "autoheal", "down"), ev(1_000, "die", "1"))).single()
+        assertEquals("Réparé automatiquement (arrêt anormal)", crash.title)
+        assertEquals("code 1", crash.detail)
+    }
+
+    @Test
     fun recreate() {
         val g = groupTimeline(listOf(ev(1, "die", "0"), ev(2, "stop"), ev(3, "destroy"), ev(4, "create"), ev(5, "start")))
         assertEquals("Recréé (mise à jour ou redéploiement)", g.single().title)
