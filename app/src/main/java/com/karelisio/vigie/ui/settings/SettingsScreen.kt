@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.automirrored.rounded.ListAlt
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Edit
@@ -144,6 +145,7 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
     var agentDialog by remember { mutableStateOf(false) }
     val guard = com.karelisio.vigie.security.LocalActionGuard.current
     val live by appContainer.repository.live.collectAsStateWithLifecycle()
+    val backups = backupsSupported()
 
     if (agentDialog) {
         AlertDialog(
@@ -332,6 +334,13 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
             item {
                 Row_(Icons.Rounded.CleaningServices, "Nettoyage du disque", "Images inutilisées, cache de construction") {
                     nav.navigate(com.karelisio.vigie.ui.navigation.CleanupRoute)
+                }
+            }
+        }
+        if (backups) {
+            item {
+                Row_(Icons.Rounded.Backup, "Sauvegardes", "Volumes et données de Vigie vers un stockage S3") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.BackupsRoute)
                 }
             }
         }

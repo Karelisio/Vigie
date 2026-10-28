@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/karelisio/vigie/agent/internal/alerts"
+	"github.com/karelisio/vigie/agent/internal/backup"
 	"github.com/karelisio/vigie/agent/internal/checks"
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/debrid"
@@ -44,6 +45,8 @@ type Server struct {
 	AutoHeal AutoHealer
 	// Debrid vérifie les comptes debrid (renseigné après New).
 	Debrid *debrid.Manager
+	// Backups gère les sauvegardes (renseigné après New).
+	Backups *backup.Service
 }
 
 func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, upd *updater.Manager, log *slog.Logger, version string) *Server {
@@ -121,6 +124,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/debrid", s.getDebrid)
 	mux.HandleFunc("PUT /api/v1/debrid/accounts", s.putDebridAccounts)
 	mux.HandleFunc("POST /api/v1/debrid/check", s.checkDebrid)
+	mux.HandleFunc("GET /api/v1/backups/config", s.getBackupConfig)
+	mux.HandleFunc("PUT /api/v1/backups/config", s.putBackupConfig)
+	mux.HandleFunc("GET /api/v1/backups/items", s.backupItems)
+	mux.HandleFunc("POST /api/v1/backups/run", s.backupRun)
+	mux.HandleFunc("POST /api/v1/backups/test", s.backupTest)
+	mux.HandleFunc("GET /api/v1/backups/history", s.backupHistory)
+	mux.HandleFunc("GET /api/v1/backups/objects", s.backupObjects)
 
 	mux.HandleFunc("GET /api/v1/ws", s.live)
 

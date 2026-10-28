@@ -148,11 +148,67 @@ L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et p
 - **Trafic du mois** avec quota (10 To sortants pour Oracle Always Free) et projection, **top consommateurs** (CPU, mémoire, réseau sur 24 h ou 7 jours), **rapport hebdomadaire** le dimanche à 19 h.
 - **Alertes sur les logs** : être prévenu quand un texte ou une regex apparaît dans les logs d'un conteneur (Réglages → Alertes et seuils, ou depuis l'écran des logs).
 - **Test réel des addons Stremio** : un service de type « Addon Stremio » vérifie que l'addon renvoie bien des liens pour un film témoin, pas seulement que son manifest répond.
+- **Sauvegardes** chaque jour (ou à la demande) vers un stockage compatible S3 : volumes, dossiers montés et données de Vigie, compressés, avec rétention et arrêt facultatif du conteneur pendant la copie (Réglages → Sauvegardes, voir [plus bas](#sauvegardes)).
 - **Deux widgets** (serveur, services) redimensionnables aux couleurs du système, **tuile** de réglages rapides, **raccourcis** Conteneurs/Services, **mode hors ligne** avec l'heure de la dernière mise à jour.
 - Plusieurs serveurs possibles (nom, URL, token), tokens chiffrés sur le téléphone (EncryptedSharedPreferences).
 - Respecte le réglage système « Supprimer les animations ».
 
 Captures d'écran : `./gradlew :app:recordRoborazziDebug` (rendu dans `app/build/outputs/roborazzi/`).
+
+## Sauvegardes
+
+L'agent lit les volumes et dossiers choisis via l'API Docker (depuis un conteneur qui les monte, même arrêté), les compresse et les envoie en flux vers un stockage compatible S3 : Oracle Object Storage, Backblaze B2, Cloudflare R2, MinIO… Rien à installer ni à monter en plus dans le compose.
+
+### Oracle Object Storage (20 Go gratuits en Always Free)
+
+1. Console Oracle › **Stockage** › **Buckets** › **Créer un bucket** (ex. `vigie-sauvegardes`, niveau Standard, privé), dans la même région que ton VPS.
+2. **Namespace** : menu du profil (en haut à droite) › **Location** (tenancy) › *Object storage namespace*.
+3. **Région** : son identifiant, par exemple `eu-paris-1` ou `eu-marseille-1`.
+4. **Clés** : menu du profil › **Mon profil** › **Customer Secret Keys** › **Générer une clé secrète**. Copie la clé secrète tout de suite (elle n'est affichée qu'une fois) ; la clé d'accès apparaît ensuite dans la liste.
+5. Appli › Réglages › **Sauvegardes** :
+   - adresse `https://<namespace>.compat.objectstorage.<région>.oraclecloud.com`, région, bucket, clés ;
+   - **Tester la connexion** (écrit, liste puis supprime un petit fichier) ;
+   - coche les éléments, choisis l'heure et le nombre de copies à garder, **Enregistrer**, puis **Sauvegarder maintenant** pour vérifier.
+
+Autres stockages : Backblaze B2 `https://s3.<région>.backblazeb2.com` (région ex. `eu-central-003`), Cloudflare R2 `https://<id-du-compte>.r2.cloudflarestorage.com` (région `auto`), MinIO `https://minio.example.com` (région `us-east-1` par défaut).
+
+### Ce qui est sauvegardé
+
+- Chaque élément devient une archive `<préfixe>/<élément>/<AAAA-MM-JJ_HHMM>.tar.gz` (heure locale) : `<élément>` est le nom du volume, le chemin du dossier sur l'hôte avec des `_` (`/srv/app/data` → `srv_app_data`), ou `vigie`.
+- L'archive contient le dossier tel que le voit le conteneur : son premier niveau est le nom du point de montage (`config/…` pour un volume monté sur `/config`).
+- **Arrêter pendant la copie** (conseillé pour les applications à base SQLite : Sonarr, Radarr, Prowlarr…) : les conteneurs qui utilisent l'élément sont arrêtés, copiés, puis toujours relancés, même si la copie échoue.
+- **Données de Vigie** : copie cohérente de la base (historique, services, réglages, alertes, journal) et des fichiers de l'agent, **sans** les clés du stockage ni le token d'accès, qui ne quittent jamais l'agent.
+- Rétention : après chaque copie réussie, seules les N plus récentes de l'élément sont gardées (les autres fichiers du bucket ne sont jamais touchés).
+- Un échec envoie une alerte, même appli ouverte ; la réussite n'est notifiée que si l'appli est fermée. Les 30 dernières sauvegardes sont listées dans l'appli.
+- Limites : une opération à la fois (sauvegarde, mise à jour, nettoyage), 45 min au plus par sauvegarde, 156 Gio au plus par archive. La mémoire reste bornée (une partie de 16 Mio envoyée à la fois), quelle que soit la taille des données.
+
+### Restaurer à la main
+
+Sur le VPS (terminal), dans un dossier de travail :
+
+1. **Télécharge la copie** depuis la console de ton stockage (Oracle : Buckets › bucket › objet › ⋮ › **Télécharger**) puis copie-la sur le serveur, ou directement :
+   ```
+   docker run --rm -v "$PWD":/backup -w /backup \
+     -e AWS_ACCESS_KEY_ID=<clé d'accès> -e AWS_SECRET_ACCESS_KEY=<clé secrète> -e AWS_DEFAULT_REGION=eu-paris-1 \
+     -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required -e AWS_RESPONSE_CHECKSUM_VALIDATION=when_required \
+     amazon/aws-cli --endpoint-url https://<namespace>.compat.objectstorage.eu-paris-1.oraclecloud.com \
+     s3 cp s3://vigie-sauvegardes/vigie/sonarr_config/2026-10-28_0330.tar.gz .
+   ```
+2. **Arrête le conteneur** qui utilise les données (Dockhand › conteneur › Stop).
+3. **Restaure** :
+   - un volume (son contenu actuel est remplacé) :
+     ```
+     docker run --rm -v sonarr_config:/restore -v "$PWD":/backup alpine sh -c \
+       'find /restore -mindepth 1 -delete && tar xzf /backup/2026-10-28_0330.tar.gz -C /restore --strip-components=1'
+     ```
+   - un dossier de l'hôte : `sudo tar xzf 2026-10-28_0330.tar.gz -C /srv/app/data --strip-components=1` (sans `--strip-components` si l'élément est un fichier seul) ;
+   - les données de Vigie (volume `vigie_vigie-data` si la stack s'appelle `vigie`) :
+     ```
+     docker run --rm -v vigie_vigie-data:/data -v "$PWD":/backup alpine sh -c \
+       'rm -f /data/vigie.db-wal /data/vigie.db-shm && tar xzf /backup/2026-10-28_0330.tar.gz -C /data --strip-components=1'
+     ```
+     Le token en place est conservé (sinon un nouveau est généré, avec son QR code) ; ressaisis ensuite les clés du stockage dans l'appli.
+4. **Redémarre le conteneur**.
 
 ---
 
@@ -186,6 +242,7 @@ Captures d'écran : `./gradlew :app:recordRoborazziDebug` (rendu dans `app/build
 - Actions possibles : **start, stop, restart** et **mise à jour d'image**. Une mise à jour ne télécharge que l'image déjà configurée sur le conteneur et le recrée avec sa configuration actuelle : l'appli ne peut fournir ni image ni configuration. L'agent refuse de s'arrêter lui-même.
 - Chaque action est enregistrée dans un journal (date, IP, action, cible, résultat), consultable dans l'appli.
 - Les variables d'environnement des conteneurs ne sont jamais exposées.
+- Sauvegardes : les clés du stockage restent sur l'agent. Elles ne sont jamais renvoyées à l'appli, ni écrites dans les logs, le journal ou la copie de la base ; changer l'adresse du stockage oblige à ressaisir la clé secrète. Comme les sauvegardes lisent le contenu des volumes choisis, garde le token aussi précieusement qu'un accès au serveur.
 
 Pour aller plus loin, tu peux placer un [socket-proxy](https://github.com/linuxserver/docker-socket-proxy) entre l'agent et Docker (`CONTAINERS=1`, `EVENTS=1`, `INFO=1`, `IMAGES=1`, `ALLOW_START=1`, `ALLOW_STOP=1`, `ALLOW_RESTARTS=1`, `POST=0` avec `VIGIE_ALLOW_UPDATES=false` ; pour les mises à jour depuis l'appli, ajoute `POST=1` et `NETWORKS=1`) et pointer `DOCKER_HOST` dessus.
 

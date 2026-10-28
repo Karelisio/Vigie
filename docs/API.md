@@ -92,6 +92,27 @@ Canaux : toute alerte qui donne lieu à une notification push (hors heures calme
 
 Debrid : vérification une minute après le démarrage, puis toutes les 6 h. `expires` : fin du premium (ms, 0 si inconnue), `days_left` : jours entiers restants, `refused` : clé refusée par le fournisseur, `checked_at` : 0 avant la première vérification. Alertes `debrid` : premium qui expire dans 7 jours (warning), dans 1 jour (critical), expiré ou clé refusée (critical), une fois par seuil et par échéance, même après un redémarrage.
 
+## Sauvegardes (agent 0.5.0)
+
+Toutes les routes sont sous `/api/v1/backups`.
+
+| Méthode | Route | Corps / réponse |
+| --- | --- | --- |
+| GET | `/api/v1/backups/config` | `{config, next_run}` : `config` = `{schedule, time, retention, endpoint, region, bucket, prefix, access_key, secret_key, items[]}`, `next_run` = prochaine sauvegarde planifiée (ms, 0 si `schedule` est faux) |
+| PUT | `/api/v1/backups/config` | `config` (champs absents : valeur actuelle conservée), renvoie `{config, next_run}` |
+| GET | `/api/v1/backups/items` | éléments sauvegardables : `id, kind (vigie/volume/bind), name, key (dossier dans le stockage), path (point de montage), containers[], size` (octets, estimée : taille du volume selon Docker, sinon celle de la dernière copie ; 0 si inconnue) |
+| POST | `/api/v1/backups/run` | lance une sauvegarde (202 : `job`, `kind: "backup"`) |
+| POST | `/api/v1/backups/test` | `config` facultative, pas enregistrée : écrit, liste puis supprime `<prefix>/.vigie-test`. Réponse 200 `{ok, message}` |
+| GET | `/api/v1/backups/history` | 30 dernières sauvegardes, la plus récente en premier : `ts, duration (ms), size (octets envoyés), ok, error?, trigger (manual/schedule), items[]` (`id, name, key?, size, raw, ok, error?`) |
+| GET | `/api/v1/backups/objects` | copies présentes dans le stockage : `key, item, size, ts` (5000 au plus). 409 si le stockage n'est pas configuré, 502 s'il répond en erreur |
+
+- `items[]` de la configuration : `{id, stop}`. `id` vaut `vigie` (base SQLite et fichiers de l'agent), `volume:<nom>` (volume nommé) ou `bind:<chemin sur l'hôte>` (dossier monté dans un conteneur). `stop` : les conteneurs en marche qui l'utilisent sont arrêtés pendant la copie, puis toujours redémarrés.
+- `time` : HH:MM selon `TZ` ; `retention` : copies gardées par élément (1 à 365, 7 par défaut) ; `prefix` : dossier dans le bucket (`vigie` par défaut, peut être vide) ; `endpoint` : `https://hôte` sans chemin (adressage « path-style »).
+- `access_key` et `secret_key` ne sont jamais renvoyées : `"••••••••"` si elles sont enregistrées, `""` sinon. Envoyer cette valeur masquée (ou vide) conserve la clé. Changer `endpoint` exige d'envoyer à nouveau `secret_key`.
+- Copies : `<prefix>/<key>/<AAAA-MM-JJ_HHMM>.tar.gz` (heure locale). La rétention ne supprime que les fichiers nommés ainsi.
+- Planification (`schedule`) : chaque jour à `time`, une fois par jour au plus ; si une opération est en cours, 3 nouveaux essais à 10 min d'intervalle.
+- Alertes : un échec envoie l'alerte `backup` (critical) même appli ouverte ; la réussite suivante la résout. Une réussite sans échec préalable n'est notifiée (`job`) que si l'appli est fermée.
+
 ## Temps réel
 
 `WS /api/v1/ws` envoie à la connexion `hello`, `overview`, `system`, `containers`, `checks`, `settings` (et l'opération en cours éventuelle), puis :

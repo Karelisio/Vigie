@@ -146,6 +146,7 @@ fun VigieNavHost(nav: NavHostController, start: Any, snackbar: SnackbarHostState
                         screen<AlertSettingsRoute> { com.karelisio.vigie.ui.settings.AlertSettingsScreen(nav) }
                         screen<AutoUpdateRoute> { com.karelisio.vigie.ui.settings.AutoUpdateScreen(nav) }
                         screen<AutoHealRoute> { com.karelisio.vigie.ui.settings.AutoHealScreen(nav) }
+                        screen<BackupsRoute> { com.karelisio.vigie.ui.settings.BackupsScreen(nav) }
                         screen<AuditRoute> { AuditScreen(nav) }
                         screen<AboutRoute> { AboutScreen(nav) }
                         screen<ReportRoute> { com.karelisio.vigie.ui.report.ReportScreen(nav) }

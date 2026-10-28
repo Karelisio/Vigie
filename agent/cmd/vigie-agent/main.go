@@ -18,6 +18,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/alerts"
 	"github.com/karelisio/vigie/agent/internal/api"
 	"github.com/karelisio/vigie/agent/internal/autoheal"
+	"github.com/karelisio/vigie/agent/internal/backup"
 	"github.com/karelisio/vigie/agent/internal/checks"
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/debrid"
@@ -141,6 +142,11 @@ func run(log *slog.Logger) error {
 				}
 				reg.OnUpdated(context.Background(), updated, time.UnixMilli(j.FinishedAt))
 			}
+			if j.Kind == "backup" {
+				// Sauvegardes : un échec est une alerte à part entière, même appli ouverte.
+				eng.NotifyBackup(j.OK, j.Message, j.Error)
+				return
+			}
 			if j.Kind != "self" || !j.OK {
 				eng.NotifyJob(j.Title(), j.Body(), j.OK)
 			}
@@ -168,6 +174,8 @@ func run(log *slog.Logger) error {
 	apiSrv.LogWatch = lw
 	apiSrv.AutoHeal = heal
 	apiSrv.Debrid = dm
+	bk := backup.New(st, dk, upd, log, backup.Options{DataDir: cfg.DataDir, SelfID: mon.SelfID(), NoteAction: mon.NoteAction})
+	apiSrv.Backups = bk
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           apiSrv.Handler(),
@@ -184,6 +192,7 @@ func run(log *slog.Logger) error {
 	go lw.Run(ctx)
 	go heal.Run(ctx)
 	go dm.Run(ctx)
+	go bk.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {
