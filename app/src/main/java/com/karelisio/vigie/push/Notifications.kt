@@ -99,8 +99,11 @@ object Notifications {
             .setGroup(GROUP)
             .setContentIntent(pi)
         val target = data["target"].orEmpty()
+        // Un accès en lecture seule ne peut pas agir : pas de bouton.
+        val readOnly = com.karelisio.vigie.appContainer.servers.servers.value
+            .firstOrNull { it.baseUrl == data["url"].orEmpty().trimEnd('/') }?.readOnly == true
         val button: Triple<String, String, Int>? = when {
-            resolved -> null
+            resolved || readOnly -> null
             data["kind"] == "container" && target.isNotEmpty() -> Triple("restart", "Redémarrer", R.drawable.ic_restart)
             data["kind"] == "image" && target.contains(", ") -> Triple("update_all", "Tout mettre à jour", R.drawable.ic_update)
             data["kind"] == "image" && target.isNotEmpty() -> Triple("update", "Mettre à jour", R.drawable.ic_update)

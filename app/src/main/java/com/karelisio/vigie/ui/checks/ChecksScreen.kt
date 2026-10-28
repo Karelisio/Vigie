@@ -230,6 +230,7 @@ fun ChecksScreen(nav: NavHostController, vm: ChecksViewModel = viewModel()) {
                         onRun = { vm.run(c.id) },
                         onEdit = { editing = c },
                         onDelete = { confirmDelete = c },
+                        readOnly = state.readOnly,
                         modifier = Modifier
                             .padding(horizontal = 16.dp)
                             .animateItem()
@@ -239,7 +240,7 @@ fun ChecksScreen(nav: NavHostController, vm: ChecksViewModel = viewModel()) {
                 }
             }
         }
-        ExtendedFloatingActionButton(
+        if (!state.readOnly) ExtendedFloatingActionButton(
             onClick = { haptics.tick(); creating = true },
             icon = { Icon(Icons.Rounded.Add, null) },
             text = { Text("Ajouter") },
@@ -290,6 +291,7 @@ internal fun CheckCard(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier,
+    readOnly: Boolean = false,
 ) {
     val colors = Vigie.status
     val scheme = MaterialTheme.colorScheme
@@ -397,8 +399,8 @@ internal fun CheckCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.onSurfaceVariant,
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (!readOnly) Spacer(Modifier.height(12.dp))
+                    if (!readOnly) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         MorphActionButton("Tester", Icons.Rounded.NetworkCheck, runner, { runner.run({ onRun() }) }, tone = ActionTone.Primary)
                         OutlinedButton(onClick = onEdit, modifier = Modifier.height(56.dp)) {
                             Icon(Icons.Rounded.Edit, null)

@@ -24,6 +24,7 @@ import kotlinx.serialization.Serializable
 @Serializable data object AlertsRoute
 @Serializable data object AlertSettingsRoute
 @Serializable data object CleanupRoute
+@Serializable data object SharedAccessRoute
 @Serializable data object AutoUpdateRoute
 @Serializable data object AuditRoute
 @Serializable data object AboutRoute

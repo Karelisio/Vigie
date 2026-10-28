@@ -24,6 +24,9 @@ data class Server(
     val baseUrl: String get() = url.trimEnd('/')
     val host: String get() = runCatching { Uri.parse(url).host }.getOrNull() ?: url
 
+    /** Accès partagé en lecture seule (jeton créé depuis « Accès partagés »). */
+    val readOnly: Boolean get() = token.startsWith("ro_")
+
     companion object {
         /** Lit un lien `vigie://connect?name=…&url=…&token=…` (contenu du QR code de l'agent). */
         fun fromLink(link: String): Server? {

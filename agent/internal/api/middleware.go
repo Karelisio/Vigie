@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"log/slog"
@@ -174,13 +175,18 @@ func (s *Server) wrap(next http.Handler) http.Handler {
 			}
 			return
 		}
-		if !s.authorized(r) {
+		role := s.authorized(r)
+		if role == "" {
 			s.limiter.authFailed(ip)
 			w.Header().Set("WWW-Authenticate", `Bearer realm="vigie"`)
 			writeErr(sw, http.StatusUnauthorized, "token invalide ou absent")
 			return
 		}
-		next.ServeHTTP(sw, r)
+		if role == roleReader && !readOnlyAllowed(r) {
+			writeErr(sw, http.StatusForbidden, "accès en lecture seule")
+			return
+		}
+		next.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), roleKey, role)))
 	})
 }
 
@@ -194,13 +200,20 @@ func levelFor(code int) slog.Level {
 	return slog.LevelInfo
 }
 
-func (s *Server) authorized(r *http.Request) bool {
+// authorized renvoie le rôle du porteur du token (« » s'il est refusé).
+func (s *Server) authorized(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	tok, ok := strings.CutPrefix(h, "Bearer ")
 	if !ok {
-		return false
+		return ""
 	}
 	// Comparaison à temps constant sur des empreintes de même longueur.
 	a := sha256.Sum256([]byte(strings.TrimSpace(tok)))
-	return subtle.ConstantTimeCompare(a[:], s.tokenHash[:]) == 1
+	if subtle.ConstantTimeCompare(a[:], s.tokenHash[:]) == 1 {
+		return roleAdmin
+	}
+	if s.shared != nil && s.shared.match(a) {
+		return roleReader
+	}
+	return ""
 }

@@ -258,6 +258,8 @@ data class ServerInfo(
     @SerialName("public_url") val publicUrl: String = "",
     @SerialName("updates_enabled") val updatesEnabled: Boolean = false,
     @SerialName("last_self_update") val lastSelfUpdate: SelfUpdateResult? = null,
+    /** « admin » (token principal) ou « readonly » (accès partagé, agent 0.5 et plus). */
+    val role: String = "admin",
 )
 
 @Serializable
@@ -300,6 +302,7 @@ data class Hello(
     @SerialName("updates_enabled") val updatesEnabled: Boolean = false,
     /** Actions de stack disponibles (agent 0.3.0 et plus). */
     val stacks: Boolean = false,
+    val role: String = "admin",
 )
 
 @Serializable
@@ -428,3 +431,24 @@ data class CleanupOptions(
     val volumes: Boolean,
     @SerialName("build_cache") val buildCache: Boolean,
 )
+
+/** Accès partagé en lecture seule (le jeton n'est connu qu'à sa création). */
+@Serializable
+data class SharedAccess(
+    val id: String = "",
+    val label: String = "",
+    val created: Long = 0,
+    @SerialName("last_used") val lastUsed: Long = 0,
+)
+
+@Serializable
+data class SharedAccessCreated(
+    val id: String = "",
+    val label: String = "",
+    val token: String = "",
+    val link: String = "",
+    @SerialName("qr_png") val qrPng: String = "",
+)
+
+@Serializable
+data class SharedAccessRequest(val label: String)

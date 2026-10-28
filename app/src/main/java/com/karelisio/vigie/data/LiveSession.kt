@@ -38,6 +38,8 @@ data class LiveState(
     val agentVersion: String = "",
     val updatesEnabled: Boolean = false,
     val stackActions: Boolean = false,
+    /** Connecté avec un accès partagé : consultation seulement. */
+    val readOnly: Boolean = false,
     /** Fin du mode maintenance (ms), 0 si inactif. */
     val maintenanceUntil: Long = 0,
     /** Opérations de l'agent, la plus récente en premier. */
@@ -167,7 +169,7 @@ class LiveSession(
             "hello" -> {
                 val h = VigieJson.decodeFromJsonElement(Hello.serializer(), data)
                 val previous = _state.value.agentVersion
-                _state.update { it.copy(thresholds = h.thresholds, agentVersion = h.version, updatesEnabled = h.updatesEnabled, stackActions = h.stacks) }
+                _state.update { it.copy(thresholds = h.thresholds, agentVersion = h.version, updatesEnabled = h.updatesEnabled, stackActions = h.stacks, readOnly = h.role == "readonly") }
                 if (previous.isNotEmpty() && h.version.isNotEmpty() && previous != h.version) {
                     _events.tryEmit(LiveEvent.AgentUpdated(previous, h.version))
                 }

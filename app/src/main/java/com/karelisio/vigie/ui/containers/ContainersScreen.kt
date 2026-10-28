@@ -266,6 +266,7 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
             c = c,
             busy = c.id in busy,
             favorite = c.name in favorites,
+            readOnly = state.readOnly,
             modifier = Modifier
                 .padding(horizontal = 16.dp)
                 .animateItem()
@@ -311,7 +312,7 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
                         tooltip = { PlainTooltip { Text("Vérifier les mises à jour d'images") } },
                         state = rememberTooltipState(),
                     ) {
-                        IconButton(onClick = ::checkImages, enabled = !checkingImages) {
+                        IconButton(onClick = ::checkImages, enabled = !checkingImages && !state.readOnly) {
                             if (checkingImages) LoadingIndicator(Modifier.size(28.dp))
                             else Icon(Icons.Rounded.Update, "Vérifier les mises à jour d'images")
                         }
@@ -369,7 +370,7 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
                 }
             }
             val updates = all.count { it.updateAvailable }
-            if (filter == ContainerFilter.Updates && updates > 0 && state.updatesEnabled) {
+            if (filter == ContainerFilter.Updates && updates > 0 && state.updatesEnabled && !state.readOnly) {
                 item(key = "update-all") {
                     androidx.compose.material3.Button(
                         onClick = { haptics.tick(); confirmGroup = "*" to "update" },
@@ -393,7 +394,7 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
                             project = project,
                             members = all.filter { it.project == project },
                             updatesEnabled = state.updatesEnabled,
-                            actions = state.stackActions,
+                            actions = state.stackActions && !state.readOnly,
                             busy = state.runningJob != null,
                             onAction = { action ->
                                 haptics.tick()
@@ -464,6 +465,7 @@ private fun SwipeableContainer(
     c: Container,
     busy: Boolean,
     favorite: Boolean,
+    readOnly: Boolean,
     modifier: Modifier,
     onOpen: () -> Unit,
     onLongPress: () -> Unit,
@@ -482,7 +484,7 @@ private fun SwipeableContainer(
     SwipeToDismissBox(
         state = state,
         modifier = modifier.clip(RoundedCornerShape(24.dp)),
-        gesturesEnabled = !busy && !c.self,
+        gesturesEnabled = !busy && !c.self && !readOnly,
         onDismiss = { value ->
             when (value) {
                 SwipeToDismissBoxValue.StartToEnd -> onRestart()

@@ -9,15 +9,15 @@ import (
 func TestAuthorized(t *testing.T) {
 	s := &Server{tokenHash: sha256.Sum256([]byte("secret-token-0123456789-abcdefghijkl"))}
 	r := httptest.NewRequest("GET", "/api/v1/info", nil)
-	if s.authorized(r) {
+	if s.authorized(r) != "" {
 		t.Fatal("requête sans token acceptée")
 	}
 	r.Header.Set("Authorization", "Bearer mauvais")
-	if s.authorized(r) {
+	if s.authorized(r) != "" {
 		t.Fatal("mauvais token accepté")
 	}
 	r.Header.Set("Authorization", "Bearer secret-token-0123456789-abcdefghijkl")
-	if !s.authorized(r) {
+	if s.authorized(r) != roleAdmin {
 		t.Fatal("bon token refusé")
 	}
 }

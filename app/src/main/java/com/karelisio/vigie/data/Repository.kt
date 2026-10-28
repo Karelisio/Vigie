@@ -260,6 +260,15 @@ class Repository(
 
     suspend fun cleanup(options: CleanupOptions): AgentJob = started(api.post(requireServer(), "/api/v1/cleanup", options))
 
+    suspend fun sharedAccesses(): List<SharedAccess> = api.get(requireServer(), "/api/v1/tokens")
+
+    suspend fun createSharedAccess(label: String): SharedAccessCreated =
+        api.post(requireServer(), "/api/v1/tokens", SharedAccessRequest(label))
+
+    suspend fun revokeSharedAccess(id: String) {
+        api.delete<Unit>(requireServer(), "/api/v1/tokens/$id", null)
+    }
+
     suspend fun updateAgent(): AgentJob = started(api.postEmpty(requireServer(), "/api/v1/agent/update"))
 
     /** Notes de version GitHub de l'image du conteneur (agent 0.4.0 et plus). */

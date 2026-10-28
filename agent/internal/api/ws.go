@@ -75,7 +75,7 @@ func (s *Server) live(w http.ResponseWriter, r *http.Request) {
 	initial := [][]byte{
 		monitor.Encode("hello", map[string]any{
 			"name": s.cfg.ServerName, "version": s.version, "thresholds": s.mon.Thresholds(),
-			"updates_enabled": s.upd.Enabled(), "stacks": true,
+			"updates_enabled": s.upd.Enabled(), "stacks": true, "role": role(r),
 		}),
 		monitor.Encode("overview", s.mon.Overview()),
 		monitor.Encode("system", s.mon.Snapshot()),

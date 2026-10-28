@@ -235,17 +235,20 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
             )
             return@Column
         }
-        Spacer(Modifier.height(16.dp))
-        Actions(c, onAction = { a -> vm.action(id, a) })
-        Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = { nav.navigate(LogsRoute(id, c.name)) },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(56.dp).cascade(0),
-            shapes = ButtonDefaults.shapes(),
-        ) {
-            Icon(Icons.AutoMirrored.Rounded.Notes, null)
-            Spacer(Modifier.width(8.dp))
-            Text("Logs en direct")
+        // Accès partagé (lecture seule) : ni actions, ni logs.
+        if (!state.readOnly) {
+            Spacer(Modifier.height(16.dp))
+            Actions(c, onAction = { a -> vm.action(id, a) })
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = { nav.navigate(LogsRoute(id, c.name)) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(56.dp).cascade(0),
+                shapes = ButtonDefaults.shapes(),
+            ) {
+                Icon(Icons.AutoMirrored.Rounded.Notes, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Logs en direct")
+            }
         }
         Spacer(Modifier.height(12.dp))
         if (c.running) StatsCard(c, Modifier.padding(horizontal = 16.dp).cascade(1))
@@ -262,7 +265,7 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
                 }
             }
         }
-        UpdateCard(
+        if (!state.readOnly) UpdateCard(
             c = c,
             enabled = state.updatesEnabled,
             busy = state.runningJob != null,

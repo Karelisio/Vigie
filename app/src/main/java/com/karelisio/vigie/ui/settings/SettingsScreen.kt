@@ -30,6 +30,8 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.NightsStay
@@ -235,9 +237,15 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
             ) { on -> haptics.toggle(on); scope.launch { vm.setDynamic(on) } }
         }
         item { Section("Sécurité et activité") }
-        item {
-            Row_(Icons.Rounded.Tune, "Alertes et seuils", "Seuils, heures calmes, certificats, sourdine") {
-                nav.navigate(com.karelisio.vigie.ui.navigation.AlertSettingsRoute)
+        if (live.readOnly) {
+            item {
+                Row_(Icons.Rounded.Visibility, "Accès en lecture seule", "Tu consultes ce serveur sans pouvoir agir ni modifier ses réglages") {}
+            }
+        } else {
+            item {
+                Row_(Icons.Rounded.Tune, "Alertes et seuils", "Seuils, heures calmes, certificats, sourdine") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.AlertSettingsRoute)
+                }
             }
         }
         item {
@@ -251,6 +259,13 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
                 },
             ) { if (canLock) lockDialog = true }
         }
+        if (!live.readOnly && versionAtLeast(live.agentVersion, 0, 5)) {
+            item {
+                Row_(Icons.Rounded.Group, "Accès partagés", "Donner un accès en lecture seule (QR code ou lien)") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.SharedAccessRoute)
+                }
+            }
+        }
         item { Row_(Icons.Rounded.Security, "Autorisations", "Notifications, caméra, batterie, installation") { nav.navigate(PermissionsRoute) } }
         item { Row_(Icons.Rounded.WarningAmber, "Alertes récentes", "Incidents des 30 derniers jours") { nav.navigate(AlertsRoute) } }
         if (versionAtLeast(live.agentVersion, 0, 4)) {
@@ -260,14 +275,16 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
                 }
             }
         }
-        item { Row_(Icons.AutoMirrored.Rounded.ListAlt, "Journal des actions", "Qui a démarré, arrêté ou redémarré quoi") { nav.navigate(AuditRoute) } }
+        if (!live.readOnly) {
+            item { Row_(Icons.AutoMirrored.Rounded.ListAlt, "Journal des actions", "Qui a démarré, arrêté ou redémarré quoi") { nav.navigate(AuditRoute) } }
+        }
         item { Section("Application") }
         item {
             Row_(Icons.Rounded.SystemUpdate, "Rechercher une mise à jour", "Version ${appContainer.updater.currentVersion}") {
                 scope.launch { vm.checkUpdate().takeIf { it.isNotEmpty() }?.let { snackbar.showSnackbar(it) } }
             }
         }
-        item {
+        if (!live.readOnly) item {
             val i = info
             val failed = i?.lastSelfUpdate?.takeIf { !it.ok && System.currentTimeMillis() - it.ts < 7 * 86_400_000L }
             Row_(
@@ -281,12 +298,12 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
                 },
             ) { if (i?.updatesEnabled == true && live.runningJob == null) agentDialog = true }
         }
-        item {
+        if (!live.readOnly) item {
             Row_(Icons.Rounded.NightsStay, "Mises à jour automatiques", "Installer les nouvelles images pendant la nuit") {
                 nav.navigate(com.karelisio.vigie.ui.navigation.AutoUpdateRoute)
             }
         }
-        if (live.v04) {
+        if (live.v04 && !live.readOnly) {
             item {
                 Row_(Icons.Rounded.CleaningServices, "Nettoyage du disque", "Images inutilisées, cache de construction") {
                     nav.navigate(com.karelisio.vigie.ui.navigation.CleanupRoute)

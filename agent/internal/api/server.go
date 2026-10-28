@@ -36,6 +36,7 @@ type Server struct {
 	started   time.Time
 	tokenHash [32]byte
 	limiter   *limiter
+	shared    *tokenSet
 	// LogWatch suit les alertes sur les logs (renseigné après New).
 	LogWatch LogWatcher
 }
@@ -46,6 +47,7 @@ func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.
 		started:   time.Now(),
 		tokenHash: sha256.Sum256([]byte(cfg.Token)),
 		limiter:   newLimiter(cfg.RateLimit, cfg.RateBurst),
+		shared:    loadTokens(st),
 	}
 }
 
@@ -87,6 +89,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/containers/{id}/events", s.containerEvents)
 	mux.HandleFunc("POST /api/v1/containers/{id}/mute", s.muteContainer)
 
+	mux.HandleFunc("GET /api/v1/tokens", s.listTokens)
+	mux.HandleFunc("POST /api/v1/tokens", s.createToken)
+	mux.HandleFunc("DELETE /api/v1/tokens/{id}", s.deleteToken)
 	mux.HandleFunc("POST /api/v1/maintenance", s.maintenance)
 	mux.HandleFunc("GET /api/v1/cleanup", s.cleanupPreview)
 	mux.HandleFunc("POST /api/v1/cleanup", s.cleanupRun)
@@ -158,6 +163,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		"push_enabled":     s.alerts.PushEnabled(),
 		"public_url":       s.cfg.PublicURL,
 		"updates_enabled":  s.upd.Enabled(),
+		"role":             role(r),
 		"last_self_update": updater.LastSelfUpdate(s.cfg.DataDir),
 	}
 	if dv != nil {
