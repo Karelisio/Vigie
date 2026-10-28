@@ -22,6 +22,8 @@ import (
 	"github.com/karelisio/vigie/agent/internal/domains"
 	"github.com/karelisio/vigie/agent/internal/monitor"
 	"github.com/karelisio/vigie/agent/internal/oracle"
+	"github.com/karelisio/vigie/agent/internal/ports"
+	"github.com/karelisio/vigie/agent/internal/sshwatch"
 	"github.com/karelisio/vigie/agent/internal/statuspage"
 	"github.com/karelisio/vigie/agent/internal/storage"
 	"github.com/karelisio/vigie/agent/internal/store"
@@ -59,6 +61,10 @@ type Server struct {
 	StatusPage *statuspage.Manager
 	// Vulns recherche les failles connues des images (renseigné après New).
 	Vulns *vulns.Scanner
+	// Ports analyse les ports ouverts sur l'hôte (renseigné après New).
+	Ports *ports.Scanner
+	// SSH lit le journal des connexions SSH de l'hôte (renseigné après New).
+	SSH *sshwatch.Watcher
 }
 
 func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, upd *updater.Manager, log *slog.Logger, version string) *Server {
@@ -160,6 +166,11 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/v1/vulns", s.getVulns)
 	mux.HandleFunc("POST /api/v1/vulns/scan", s.scanVulns)
+
+	// Sécurité : ports ouverts et connexions SSH (refusés en lecture seule).
+	mux.HandleFunc("GET /api/v1/ports", s.ports)
+	mux.HandleFunc("GET /api/v1/ssh", s.sshSummary)
+	mux.HandleFunc("GET /api/v1/ssh/events", s.sshEvents)
 
 	mux.HandleFunc("GET /api/v1/ws", s.live)
 

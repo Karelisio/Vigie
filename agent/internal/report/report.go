@@ -27,6 +27,15 @@ type Report struct {
 	Disk       Disk           `json:"disk"`
 	Traffic    *Traffic       `json:"traffic,omitempty"` // absent sans historique
 	Oracle     *oracle.Report `json:"oracle,omitempty"`  // instances Oracle Cloud seulement
+	SSH        *SSH           `json:"ssh,omitempty"`     // absent sans événement SSH sur la période
+}
+
+// SSH résume les connexions SSH de la période (journal d'authentification de l'hôte).
+type SSH struct {
+	Failed   int `json:"failed"`
+	Accepted int `json:"accepted"`
+	NewIPs   int `json:"new_ips"` // adresses jamais vues lors d'une connexion réussie
+	Bans     int `json:"bans"`    // bannissements fail2ban
 }
 
 type Service struct {
@@ -108,6 +117,8 @@ var kindLabels = map[string]string{
 	"oracle":    "Oracle",
 	"traffic":   "trafic",
 	"job":       "mises à jour",
+	"port":      "ports",
+	"ssh":       "SSH",
 }
 
 // Build construit le rapport des days derniers jours.
@@ -175,6 +186,9 @@ func Build(ctx context.Context, st *store.Store, in Input, now time.Time, days i
 
 	if o, err := oracle.Evaluate(ctx, st, in.Kernel, in.NumCPU); err == nil && o.Applicable {
 		r.Oracle = &o
+	}
+	if w, err := st.SSHWeek(ctx, from); err == nil && w.Failed+w.Accepted+w.Bans > 0 {
+		r.SSH = &SSH{Failed: w.Failed, Accepted: w.Accepted, NewIPs: w.NewIPs, Bans: w.Bans}
 	}
 	return r, nil
 }
@@ -256,6 +270,16 @@ func (r Report) Text() string {
 	}
 	if o := r.Oracle; o != nil && o.Risk != "unknown" {
 		lines = append(lines, "Oracle : "+map[string]string{"low": "risque faible", "medium": "à surveiller", "high": "risque de récupération"}[o.Risk])
+	}
+	if s := r.SSH; s != nil {
+		line := "SSH : " + plural(s.Failed, "échec") + ", " + plural(s.Accepted, "connexion")
+		if s.NewIPs > 0 {
+			line += fmt.Sprintf(" (%d depuis une nouvelle adresse)", s.NewIPs)
+		}
+		if s.Bans > 0 {
+			line += ", " + plural(s.Bans, "bannissement")
+		}
+		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
 }

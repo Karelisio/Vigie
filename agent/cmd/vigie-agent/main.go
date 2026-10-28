@@ -26,9 +26,11 @@ import (
 	"github.com/karelisio/vigie/agent/internal/domains"
 	"github.com/karelisio/vigie/agent/internal/logwatch"
 	"github.com/karelisio/vigie/agent/internal/monitor"
+	"github.com/karelisio/vigie/agent/internal/ports"
 	"github.com/karelisio/vigie/agent/internal/qr"
 	"github.com/karelisio/vigie/agent/internal/regression"
 	"github.com/karelisio/vigie/agent/internal/settings"
+	"github.com/karelisio/vigie/agent/internal/sshwatch"
 	"github.com/karelisio/vigie/agent/internal/statuspage"
 	"github.com/karelisio/vigie/agent/internal/storage"
 	"github.com/karelisio/vigie/agent/internal/store"
@@ -137,6 +139,20 @@ func run(log *slog.Logger) error {
 	})
 	vs.OnReport = eng.OnVulns
 
+	// Ports ouverts (toutes les 5 min et après les événements Docker) et connexions SSH (journal de l'hôte).
+	portScan := ports.New(cfg.HostProc, dk, st, set.Get, eng.NotifyPort, log)
+	sshWatch := sshwatch.New(st, set.Get, eng.NotifySSHLogin, log, sshwatch.Options{Root: cfg.HostRoot, GeoURL: os.Getenv("VIGIE_GEOIP")})
+	secEvent, secSettings := mon.OnEvent, set.OnChange
+	mon.OnEvent = func(ev docker.Event) {
+		secEvent(ev)
+		portScan.OnEvent(ev)
+	}
+	set.OnChange = func(s settings.Settings) {
+		secSettings(s)
+		portScan.Kick()
+		sshWatch.Kick()
+	}
+
 	upd := updater.New(dk, log, updater.Hooks{
 		NoteAction:   mon.NoteAction,
 		SetTransient: mon.SetTransient,
@@ -227,6 +243,8 @@ func run(log *slog.Logger) error {
 	}
 	apiSrv.StatusPage = sp
 	apiSrv.Vulns = vs
+	apiSrv.Ports = portScan
+	apiSrv.SSH = sshWatch
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           apiSrv.Handler(),
@@ -247,6 +265,8 @@ func run(log *slog.Logger) error {
 	go sto.Run(ctx)
 	go doms.Run(ctx)
 	go vs.Run(ctx)
+	go portScan.Run(ctx)
+	go sshWatch.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -236,6 +236,35 @@ Réponse : `enabled` (réglage `vuln_scan`), `scanning`, `progress` (pendant l'a
 - **Alertes** `vuln` selon `vuln_alert` (`critical` par défaut, `high` : critiques et élevées, `off`) : failles de ce niveau qui ont une version corrigée, une notification par image (titre « comet : 2 failles critiques corrigées dans une version plus récente », corps : paquets, versions et CVE, piste de mise à jour), une seule fois par faille et par image, même après un redémarrage ; rien pour un conteneur en sourdine ou ignoré.
 - Accès partagés en lecture seule : 403 sur `/api/v1/vulns`.
 
+## Ports ouverts et connexions SSH (agent 0.6.0)
+
+Refusées aux accès en lecture seule (403 `accès en lecture seule`).
+
+| Méthode | Route | |
+| --- | --- | --- |
+| GET | `/api/v1/ports` | dernière analyse ; `?refresh=1` (ou aucune analyse encore) : analyse maintenant. `{ts, ports[], host_ip, pangolin[], docker, error?}` |
+| GET | `/api/v1/ssh` | `{state, source, message, fix?, fail2ban, read_at, geo, stats, top_ips[], top_users[], logins[], hourly[], daily[]}` |
+| GET | `/api/v1/ssh/events?limit=100` | derniers événements (500 au plus), du plus récent au plus ancien : `[{ts, kind, user?, ip, method?, count, new_ip?, country, country_name}]` |
+
+**Ports.** Analyse toutes les 5 min et 5 s après un événement Docker (`start`, `die`, `stop`, `destroy`…), sur les sockets de l'espace réseau de l'hôte (`/host/proc/1/net/tcp`, `tcp6`, `udp`, `udp6` : TCP en écoute, UDP non connectées) et les ports publiés par les conteneurs en marche (aussi sans socket visible, proxy userland de Docker désactivé). Une ligne par port, protocole et portée :
+
+- `port`, `proto` (`tcp`/`udp`), `address` et `addresses[]` (adresses d'écoute), `scope` : `public` (0.0.0.0, ::, ou une adresse de l'hôte hors réseaux Docker, comme l'IP privée de la VNIC Oracle) ou `local` (boucle locale, lien local, bridges et réseaux Docker), `interface` (interface ou réseau Docker de l'adresse, si connu) ;
+- `container`, `container_id`, `target_port` (port dans le conteneur) : conteneur qui publie le port ; `host_network` : conteneur en `network_mode: host` qui déclare ce port (`EXPOSE`/`expose:`, rattachement déduit) ; sinon `process` : nom probable d'un processus de l'hôte pour les ports connus (`SSH` pour 22, `DNS` pour 53…), vide si inconnu (le rattachement socket → processus demanderait des capacités) ;
+- `pangolin` : port d'un conteneur de la pile Pangolin (nom ou image `pangolin`, `gerbil`, `traefik`, `newt`) : attendu ; `allowed` : dans `port_allow` ; `bypasses_pangolin` : public et publié par un autre conteneur (joignable sans le reverse proxy) ; `alerted` : alerte en cours ; `source` : `socket` ou `docker` ; `since` : première détection (ms).
+- `host_ip` : IPv4 de l'interface de la route par défaut ; `pangolin[]` : conteneurs Pangolin repérés ; `docker` faux : Docker injoignable, rattachement impossible (pas d'alerte).
+
+Alerte `port` (réglage `port_alert`, activé par défaut ; `port_allow[]` : `"443/tcp"`, `"51820/udp"`…) : « Nouveau port ouvert sur Internet : 8080/tcp (comet) » (warning) quand un port public non autorisé et hors Pangolin apparaît, une seule fois tant qu'il reste ouvert ; « Port fermé : … » (info, résolue) après 10 min d'absence constatée par l'agent (un redémarrage du serveur n'est pas une fermeture). Le premier passage fixe la base (aucune alerte pour les ports déjà ouverts). Une socket d'un processus de l'hôte doit être vue deux passages de suite (4 min) avant d'être signalée. Autoriser un port oublie son alerte sans notification. L'état (base, dates de détection, alertes) est gardé en base.
+
+**SSH.** Lecture toutes les 15 s de `<VIGIE_HOST_ROOT>/var/log/auth.log`, sinon `/var/log/secure`, et de `/var/log/fail2ban.log` s'il existe (prisons SSH et `recidive`). Position (inode, octet, début du fichier) gardée en base avec les événements : reprise après redémarrage, rotation (fin de l'ancien fichier `.1` lue d'abord) et troncature gérées ; 8 Mio lus au plus par passage. Première lecture : le fichier tourné (`.1`, ou `.1.gz`) puis le courant (64 Mio au plus chacun), 7 jours gardés, sans alerte. Horodatages ISO 8601 (rsyslog récent) et syslog classique (sans année, fuseau de l'hôte lu dans `/etc/localtime`).
+
+- `state` : `ok`, `permission` (fichier illisible : `fix` donne l'extrait de compose exact : `group_add` avec le groupe du fichier s'il est lisible par son groupe, sinon `cap_add: [DAC_READ_SEARCH]`), `journald` (pas de fichier, journald seul : installer rsyslog), `missing` (aucun journal, ou `/:/host/root:ro` non monté), `disabled` (réglage `ssh_watch` à faux), `error` ; `message` : explication en français ; `source` : chemin sur l'hôte ; `fail2ban` : `ok`, `absent` ou `permission` ; `read_at` : dernière lecture (ms) ; `geo` : pays activés.
+- `stats` : `failed_24h, failed_7d, accepted_7d, bans_7d, ips_7d` (adresses distinctes en échec), `users_7d`, `since` (plus ancien événement, ms).
+- `top_ips[]` (7 jours, 20 au plus) : `ip, count, last, banned, accepted` (une connexion a aussi réussi), `country` (ISO, vide si inconnu), `country_name` (français, `Réseau privé` pour une adresse non routable) ; `top_users[]` : `user, count, invalid` (inexistant sur le serveur) ; `logins[]` (30 jours, 50 au plus) : `ts, user, ip, method, country, country_name, new_ip` ; `hourly[]` (24 h) et `daily[]` (30 jours) : `{ts, count}` échecs par tranche.
+- Événements (`kind`) : `fail` (échec d'un utilisateur existant, y compris connexion fermée avant authentification), `invalid` (utilisateur inexistant), `accepted` (`method` : `publickey`, `password`, `keyboard-interactive`…), `ban` (`method` : prison). Lignes d'une même connexion dédoublonnées, tentatives identiques rapprochées regroupées (`count`). Gardés 30 jours.
+- Pays : GeoJS (`https://get.geojs.io/v1/ip/country.json?ip=a,b,…`), gratuit, sans clé, en HTTPS et par lots de 50 ; une requête toutes les 10 s au plus (sauf pour une alerte de connexion), cache de 30 jours (pays inconnu redemandé après 24 h). Seules les adresses publiques sont envoyées ; en cas d'échec, pays inconnu. `VIGIE_GEOIP=off` désactive, ou une autre URL au même format.
+
+Alerte `ssh` (réglage `ssh_login_alert`, activé par défaut) à chaque connexion réussie : « Connexion SSH : ubuntu depuis 1.2.3.4 (France) », warning si l'adresse n'a jamais servi à une connexion réussie (adresses gardées 1 an), info sinon ; le détail indique la méthode et les échecs de l'adresse sur 7 jours. Pas d'alerte pour les simples tentatives, ni pour les connexions de plus de 6 h (agent arrêté) ; 5 alertes au plus par lecture. Le rapport (`/api/v1/report`) contient `ssh` : `{failed, accepted, new_ips, bans}` sur la période (absent sans événement).
+
 ## Temps réel
 
 `WS /api/v1/ws` envoie à la connexion `hello`, `overview`, `system`, `containers`, `checks`, `settings` (et l'opération en cours éventuelle), puis :

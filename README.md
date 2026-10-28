@@ -160,6 +160,8 @@ L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et p
 - **Noms de domaine** (Réglages → Noms de domaine) : date d'expiration lue chaque jour chez le registre (RDAP) pour les domaines de tes services et ceux que tu ajoutes, jours restants en couleur, bureau d'enregistrement ; alerte 30 jours avant (réglable), puis 7 jours avant et à l'expiration, close au renouvellement.
 - **Page d'état publique** (Réglages → Page d'état publique) : une page web à partager, sans compte ni appli, avec l'état des services et conteneurs choisis sous le nom que tu leur donnes, la disponibilité sur 90 jours et les incidents de la semaine ; adresse secrète, que tu peux changer à tout moment (voir [plus bas](#page-détat-publique)).
 - **Failles connues dans les images** (Réglages → Sécurité du serveur) : chaque nuit, après une mise à jour d'image ou à la demande, l'agent relève les paquets installés (Debian, Ubuntu, Alpine, images distroless, dépendances npm) et les compare à la base publique [OSV](https://osv.dev) ; seuls des noms et versions de paquets lui sont envoyés. Gravité, version corrigée, lien vers la fiche, et alerte pour les failles critiques corrigées dans une version plus récente.
+- **Ports ouverts** (Réglages → Sécurité du serveur) : ce qui écoute sur Internet ou seulement sur le serveur, rattaché au conteneur qui le publie ; badges Pangolin, autorisé et « contourne Pangolin » ; alerte quand un nouveau port s'ouvre sur Internet ; test depuis le téléphone pour voir ce qui est vraiment joignable malgré le pare-feu d'Oracle.
+- **Connexions SSH** (Réglages → Sécurité du serveur) : échecs sur 24 h et 7 jours, adresses les plus insistantes avec leur pays, utilisateurs essayés, bannissements fail2ban et connexions réussies, avec une alerte à chaque connexion (avertissement depuis une nouvelle adresse). Demande un groupe en plus dans le compose (voir [plus bas](#connexions-ssh)).
 - **Deux widgets** (serveur, services) redimensionnables aux couleurs du système, **tuile** de réglages rapides, **raccourcis** Conteneurs/Services, **mode hors ligne** avec l'heure de la dernière mise à jour.
 - Plusieurs serveurs possibles (nom, URL, token), tokens chiffrés sur le téléphone (EncryptedSharedPreferences).
 - Respecte le réglage système « Supprimer les animations ».
@@ -252,6 +254,32 @@ Une page web, sans compte ni appli, pour montrer à tes proches si tes services 
 
 La page n'affiche que les noms choisis : ni adresse, ni IP, ni image, ni message d'erreur, ni nom de conteneur ou de serveur. **Changer le lien** crée un nouvel identifiant : l'ancien lien affiche aussitôt « Page introuvable », comme une page désactivée. Une version JSON est servie à la même adresse suivie de `.json` (détail dans [`docs/API.md`](docs/API.md#page-détat-publique-agent-060)).
 
+## Connexions SSH
+
+L'agent lit le journal d'authentification de l'hôte par le montage `/:/host/root:ro` déjà présent : `/var/log/auth.log` (Debian, Ubuntu) ou `/var/log/secure` (RHEL, Oracle Linux), et `/var/log/fail2ban.log` s'il existe. Rien à installer sur le serveur.
+
+### Donner le droit de lire le journal
+
+L'agent tourne en root mais sans aucune capacité (`cap_drop: ALL`) : il ne lit que les fichiers dont root est propriétaire, ou ceux de ses groupes. Sur Ubuntu, `auth.log` appartient à `syslog`, groupe `adm`, droits 640. Ajoute ce groupe au conteneur :
+
+1. Sur le VPS : `getent group adm` répond `adm:x:4:syslog,ubuntu` → le numéro du groupe est `4`.
+2. Dans Dockhand, modifie la stack et ajoute au service `vigie-agent`, au même niveau que `cap_drop` (les lignes sont déjà là, en commentaire) :
+   ```yaml
+       group_add:
+         - "4"
+   ```
+3. Redéploie. Tant que ce n'est pas fait, l'écran **Connexions SSH** explique le problème et donne l'extrait exact à copier, calculé d'après le groupe et les droits réels du fichier.
+
+`/var/log/secure` (RHEL, Oracle Linux : 600, propriétaire root) se lit sans rien changer. Si l'appli signale un fichier lisible par son seul propriétaire (autre que root), ajoute plutôt `cap_add: [DAC_READ_SEARCH]` : lecture seule des fichiers, aucun autre droit.
+
+**Pas de fichier ?** Un système qui n'écrit qu'avec journald n'a pas de `auth.log` : `sudo apt install rsyslog && sudo systemctl enable --now rsyslog` (ou `sudo dnf install rsyslog`).
+
+### Ce que fait l'agent
+
+- **Compte** les échecs (mot de passe, clé, utilisateur inexistant, connexion fermée avant authentification sur un serveur à clé seule), les connexions réussies et les bannissements fail2ban des prisons SSH ; les lignes d'une même connexion ne sont comptées qu'une fois. 30 jours d'historique ; au premier démarrage, la semaine passée est reprise (fichier tourné compris), sans alerte.
+- **Alerte** à chaque connexion réussie : « Connexion SSH : ubuntu depuis 1.2.3.4 (France) », en avertissement si l'adresse n'a jamais servi à une connexion réussie. Jamais pour les simples tentatives (le bruit permanent d'Internet). Une ligne SSH s'ajoute au rapport du dimanche.
+- **Pays des adresses** : seules les adresses sont envoyées, par lots, au service gratuit [GeoJS](https://www.geojs.io/) (HTTPS, sans clé ni compte), une requête toutes les 10 s au plus, réponses gardées 30 jours. `VIGIE_GEOIP: "off"` désactive l'envoi (pays affiché comme inconnu).
+
 ---
 
 ## Configuration de l'agent
@@ -276,6 +304,7 @@ La page n'affiche que les noms choisis : ni adresse, ni IP, ni image, ni message
 | `VIGIE_NET_MBPS` | auto | débit réseau de l'instance, pour le critère réseau d'Oracle |
 | `VIGIE_OSV_URL` | `https://api.osv.dev` | API OSV interrogée pour les failles connues (miroir, essais) |
 | `FCM_SERVICE_ACCOUNT_B64` | — | compte de service Firebase (base64) |
+| `VIGIE_GEOIP` | GeoJS | pays des adresses des connexions SSH ; `off` : rien n'est envoyé |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | accepte aussi `tcp://socket-proxy:2375` |
 
 ### Sécurité

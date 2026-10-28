@@ -37,6 +37,10 @@ services:
       # Conteneurs à ne jamais signaler (noms séparés par des virgules).
       VIGIE_IGNORE: ""
 
+      # Pays des adresses des connexions SSH, demandés au service gratuit GeoJS (adresses seules,
+      # mises en cache 30 jours). "off" pour ne rien envoyer.
+      # VIGIE_GEOIP: "off"
+
       TZ: "Europe/Paris"
     volumes:
       # API Docker : lecture, start/stop/restart et mises à jour d'images depuis l'appli
@@ -60,6 +64,15 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Connexions SSH (Réglages › Sécurité du serveur) : l'agent lit /var/log/auth.log de l'hôte, qui appartient à
+    # syslog, groupe adm, droits 640. Sans aucune capacité, root ne peut pas le lire : ajoute le groupe adm
+    # au conteneur (4 sur Debian/Ubuntu ; vérifie avec « getent group adm ») en décommentant ces lignes.
+    # group_add:
+    #   - "4"
+    # Si l'appli indique un fichier lisible par son seul propriétaire (/var/log/secure en 600 sur
+    # RHEL/Oracle Linux, à un autre utilisateur que root), décommente plutôt ces lignes (lecture seule).
+    # cap_add:
+    #   - DAC_READ_SEARCH
     mem_limit: 192m
     cpus: 0.5
     logging:

@@ -59,12 +59,12 @@ fun SecurityScreen(nav: NavHostController) {
             }
         }
         item {
-            Row_(Icons.Rounded.Lan, "Ports ouverts", "Ce qui écoute sur Internet, et ce qui contourne Pangolin") {
+            Row_(Icons.Rounded.Lan, "Ports ouverts", portsSubtitle("Ce qui écoute sur Internet, et ce qui contourne Pangolin")) {
                 nav.navigate(PortsRoute)
             }
         }
         item {
-            Row_(Icons.Rounded.Terminal, "Connexions SSH", "Tentatives, adresses, pays, connexions réussies") {
+            Row_(Icons.Rounded.Terminal, "Connexions SSH", sshSubtitle("Tentatives, adresses, pays, connexions réussies")) {
                 nav.navigate(SshRoute)
             }
         }
