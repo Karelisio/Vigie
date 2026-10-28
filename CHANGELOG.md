@@ -2,6 +2,16 @@
 
 Le workflow de release publie la section correspondant au tag (`## [X.Y.Z]`).
 
+## [0.7.0]
+
+- Correction des failles connues : pour chaque image vulnérable, Vigie choisit la meilleure voie et l'explique (Réglages → Sécurité du serveur → Failles connues).
+  - Nouvelle version de l'image : analysée avant d'être installée (« corrige N failles, en ajoute M »), puis mise à jour normale avec retour arrière possible.
+  - Sinon, correctif par Vigie : seuls les paquets système vulnérables (Debian, Ubuntu, Alpine) sont mis à niveau dans une image dérivée, le conteneur est recréé à l'identique (même référence, même configuration) ; « Revenir à l'image d'origine » en un bouton.
+  - Rien à faire : images sans gestionnaire de paquets (distroless) ou dépendances de l'application (npm…) : lien vers le dépôt de l'image pour signaler.
+- « Corriger » par image, « Corriger tout ce qui peut l'être », et correction automatique la nuit (désactivée par défaut) avec bilan au réveil.
+- Une image corrigée par Vigie n'apparaît pas comme « MAJ disponible » ; une vraie nouvelle version est toujours détectée et installée.
+- Agent : à mettre à jour depuis l'appli (Réglages → Mettre à jour l'agent).
+
 ## [0.6.0]
 
 - Retour à la version précédente d'un conteneur en un bouton après une mise à jour (fiche, chronologie, notification de surconsommation) ; la version écartée n'est plus réinstallée la nuit.
