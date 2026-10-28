@@ -50,6 +50,16 @@ type Settings struct {
 
 	// Rapport hebdomadaire (dimanche soir).
 	WeeklyReport bool `json:"weekly_report"`
+
+	// Réparation automatique : redémarrer un conteneur en mauvaise santé ou planté.
+	AutoHeal      bool     `json:"auto_heal"`
+	AutoHealAll   bool     `json:"auto_heal_all"`   // tous les conteneurs (sinon AutoHealList)
+	AutoHealList  []string `json:"auto_heal_list"`  // noms des conteneurs concernés
+	AutoHealDelay int      `json:"auto_heal_delay"` // minutes en mauvaise santé avant redémarrage
+	AutoHealMax   int      `json:"auto_heal_max"`   // redémarrages au plus par heure et par conteneur
+
+	// Alerte si un conteneur consomme nettement plus après une mise à jour.
+	RegressionAlert bool `json:"regression_alert"`
 }
 
 // LogRule déclenche une alerte quand une ligne de log correspond au motif.
@@ -132,6 +142,19 @@ func (s *Settings) validate() error {
 		return err
 	}
 	s.AutoUpdateList = cleanNames(s.AutoUpdateList)
+	s.AutoHealList = cleanNames(s.AutoHealList)
+	if s.AutoHealDelay == 0 {
+		s.AutoHealDelay = 3
+	}
+	if s.AutoHealMax == 0 {
+		s.AutoHealMax = 3
+	}
+	if s.AutoHealDelay < 1 || s.AutoHealDelay > 60 {
+		return errors.New("délai avant réparation hors limites (1–60 min)")
+	}
+	if s.AutoHealMax < 1 || s.AutoHealMax > 10 {
+		return errors.New("nombre de réparations par heure hors limites (1–10)")
+	}
 	if s.NetQuotaTB < 0 || s.NetQuotaTB > 1000 {
 		return errors.New("quota de trafic hors limites (0–1000 To)")
 	}
@@ -213,6 +236,11 @@ func Load(ctx context.Context, st *store.Store, cfg *config.Config) *Manager {
 		NetQuotaAlert:  80,
 		LogRules:       []LogRule{},
 		WeeklyReport:   true,
+
+		AutoHealList:    []string{},
+		AutoHealDelay:   3,
+		AutoHealMax:     3,
+		RegressionAlert: true,
 	}
 	if raw := st.Get(ctx, key); raw != "" {
 		saved := s
@@ -230,6 +258,7 @@ func (m *Manager) Get() Settings {
 	cp.Muted = append([]string{}, m.s.Muted...)
 	cp.AutoUpdateList = append([]string{}, m.s.AutoUpdateList...)
 	cp.LogRules = append([]LogRule{}, m.s.LogRules...)
+	cp.AutoHealList = append([]string{}, m.s.AutoHealList...)
 	return cp
 }
 

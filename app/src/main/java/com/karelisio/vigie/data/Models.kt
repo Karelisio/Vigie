@@ -331,6 +331,12 @@ data class AgentSettings(
     @SerialName("maintenance_until") val maintenanceUntil: Long = 0,
     @SerialName("log_rules") val logRules: List<LogRule> = emptyList(),
     @SerialName("weekly_report") val weeklyReport: Boolean = true,
+    @SerialName("auto_heal") val autoHeal: Boolean = false,
+    @SerialName("auto_heal_all") val autoHealAll: Boolean = false,
+    @SerialName("auto_heal_list") val autoHealList: List<String> = emptyList(),
+    @SerialName("auto_heal_delay") val autoHealDelay: Int = 3,
+    @SerialName("auto_heal_max") val autoHealMax: Int = 3,
+    @SerialName("regression_alert") val regressionAlert: Boolean = true,
 )
 
 /** Alerte quand une ligne de log d'un conteneur contient un texte (ou correspond à une regex). */

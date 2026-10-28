@@ -204,7 +204,8 @@ class Repository(
         val known = when {
             !live.value.updatesEnabled -> SETTINGS_0_2
             !live.value.stackActions -> SETTINGS_0_2 + "prune_images"
-            versionAtLeast(live.value.agentVersion, 0, 4) -> body.keys
+            versionAtLeast(live.value.agentVersion, 0, 5) -> body.keys
+            versionAtLeast(live.value.agentVersion, 0, 4) -> body.keys - SETTINGS_0_5
             else -> SETTINGS_0_2 + "prune_images"
         }
         return api.put(requireServer(), "/api/v1/settings", JsonObject(body.filterKeys { it in known }))
@@ -286,6 +287,11 @@ class Repository(
 private val SETTINGS_0_2 = setOf(
     "cpu", "ram", "disk", "duration_min", "quiet_enabled", "quiet_start", "quiet_end",
     "muted", "image_updates", "oracle_watch", "cert_days",
+)
+
+/** Champs de réglages apparus avec l'agent 0.5.0. */
+private val SETTINGS_0_5 = setOf(
+    "auto_heal", "auto_heal_all", "auto_heal_list", "auto_heal_delay", "auto_heal_max", "regression_alert",
 )
 
 /** Compare une version « X.Y.Z » (les versions de développement sont considérées récentes). */
