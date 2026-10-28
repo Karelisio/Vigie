@@ -52,6 +52,10 @@ var (
 
 // Point est l'état d'un conteneur juste avant sa dernière mise à jour par Vigie.
 type Point struct {
+	// Kind : « » (mise à jour) ou « vulnfix » (passage à une image corrigée par Vigie, agent 0.7.0 :
+	// l'ancienne image est l'image d'origine, non corrigée ; Ignored signifie alors que la correction
+	// automatique de nuit ne refait pas la correction écartée).
+	Kind       string   `json:"kind,omitempty"`
 	Container  string   `json:"container"`
 	ImageRef   string   `json:"image_ref"`    // référence configurée (ex. ghcr.io/x/y:latest)
 	OldImageID string   `json:"old_image_id"` // image d'avant la mise à jour
@@ -121,7 +125,13 @@ func label(version, ref, id string, digests []string) string {
 }
 
 func (p *Point) OldLabel() string { return label(p.OldVersion, p.ImageRef, p.OldImageID, p.OldDigests) }
-func (p *Point) NewLabel() string { return label(p.NewVersion, p.ImageRef, p.NewImageID, p.NewDigests) }
+
+func (p *Point) NewLabel() string {
+	if p.Kind == PointVulnfix {
+		return p.OldLabel() + " corrigée"
+	}
+	return label(p.NewVersion, p.ImageRef, p.NewImageID, p.NewDigests)
+}
 
 // state situe le point par rapport à l'image en service.
 func (p *Point) state(current string) string {
@@ -408,6 +418,9 @@ func (m *Manager) rollbackOne(ctx context.Context, j *Job, c Member, p *Point) (
 		m.prune(ctx, p.NewImageID)
 	}
 	m.log.Info("retour à la version précédente", "conteneur", name, "version", p.OldLabel(), "écartée", p.NewLabel())
+	if p.Kind == PointVulnfix {
+		return Result{Name: name, OK: true, Updated: true, Message: fmt.Sprintf("%s est revenu à son image d'origine (%s, non corrigée)", name, p.OldLabel())}, nil
+	}
 	return Result{Name: name, OK: true, Updated: true, Message: fmt.Sprintf("%s est revenu en version %s", name, p.OldLabel())}, nil
 }
 

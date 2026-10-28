@@ -28,6 +28,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/storage"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/updater"
+	"github.com/karelisio/vigie/agent/internal/vulnfix"
 	"github.com/karelisio/vigie/agent/internal/vulns"
 )
 
@@ -61,6 +62,8 @@ type Server struct {
 	StatusPage *statuspage.Manager
 	// Vulns recherche les failles connues des images (renseigné après New).
 	Vulns *vulns.Scanner
+	// VulnFix corrige les failles des images (renseigné après New, agent 0.7.0).
+	VulnFix *vulnfix.Service
 	// Ports analyse les ports ouverts sur l'hôte (renseigné après New).
 	Ports *ports.Scanner
 	// SSH lit le journal des connexions SSH de l'hôte (renseigné après New).
@@ -166,6 +169,10 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/v1/vulns", s.getVulns)
 	mux.HandleFunc("POST /api/v1/vulns/scan", s.scanVulns)
+	mux.HandleFunc("GET /api/v1/vulns/fixes", s.getVulnFixes)
+	mux.HandleFunc("POST /api/v1/vulns/fix", s.postVulnFix)
+	mux.HandleFunc("POST /api/v1/vulns/fix-all", s.postVulnFixAll)
+	mux.HandleFunc("POST /api/v1/vulns/analyze", s.postVulnAnalyze)
 
 	// Sécurité : ports ouverts et connexions SSH (refusés en lecture seule).
 	mux.HandleFunc("GET /api/v1/ports", s.ports)

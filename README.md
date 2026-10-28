@@ -162,6 +162,7 @@ L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et p
 - **Noms de domaine** (Réglages → Noms de domaine) : date d'expiration lue chaque jour chez le registre (RDAP) pour les domaines de tes services et ceux que tu ajoutes, jours restants en couleur, bureau d'enregistrement ; alerte 30 jours avant (réglable), puis 7 jours avant et à l'expiration, close au renouvellement.
 - **Page d'état publique** (Réglages → Page d'état publique) : une page web à partager, sans compte ni appli, avec l'état des services et conteneurs choisis sous le nom que tu leur donnes, la disponibilité sur 90 jours et les incidents de la semaine ; adresse secrète, que tu peux changer à tout moment (voir [plus bas](#page-détat-publique)).
 - **Failles connues dans les images** (Réglages → Sécurité du serveur) : chaque nuit, après une mise à jour d'image ou à la demande, l'agent relève les paquets installés (Debian, Ubuntu, Alpine, images distroless, dépendances npm) et les compare à la base publique [OSV](https://osv.dev) ; seuls des noms et versions de paquets lui sont envoyés. Gravité, version corrigée, lien vers la fiche, et alerte pour les failles critiques corrigées dans une version plus récente.
+- **Correction des failles** (Failles connues, agent 0.7) : pour chaque image vulnérable, Vigie choisit la meilleure voie et l'explique. Nouvelle version publiée : il l'analyse avant de l'installer (« corrige 7 failles, en ajoute 1 »). Sinon, il met à niveau les seuls paquets Debian, Ubuntu ou Alpine vulnérables dans une image dérivée et recrée le conteneur à l'identique, avec bilan (« 7 failles corrigées, 3 restantes ») et retour à l'image d'origine en un geste. Bouton « Corriger tout ce qui peut l'être » et, si tu l'actives, correction automatique la nuit pour les conteneurs choisis (voir [plus bas](#correction-des-failles)).
 - **Ports ouverts** (Réglages → Sécurité du serveur) : ce qui écoute sur Internet ou seulement sur le serveur, rattaché au conteneur qui le publie ; badges Pangolin, autorisé et « contourne Pangolin » ; alerte quand un nouveau port s'ouvre sur Internet ; test depuis le téléphone pour voir ce qui est vraiment joignable malgré le pare-feu d'Oracle.
 - **Connexions SSH** (Réglages → Sécurité du serveur) : échecs sur 24 h et 7 jours, adresses les plus insistantes avec leur pays, utilisateurs essayés, bannissements fail2ban et connexions réussies, avec une alerte à chaque connexion (avertissement depuis une nouvelle adresse). Demande un groupe en plus dans le compose (voir [plus bas](#connexions-ssh)).
 - **Deux widgets** (serveur, services) redimensionnables aux couleurs du système, **tuile** de réglages rapides, **raccourcis** Conteneurs/Services, **mode hors ligne** avec l'heure de la dernière mise à jour.
@@ -289,6 +290,47 @@ Une page web, sans compte ni appli, pour montrer à tes proches si tes services 
 
 La page n'affiche que les noms choisis : ni adresse, ni IP, ni image, ni message d'erreur, ni nom de conteneur ou de serveur. **Changer le lien** crée un nouvel identifiant : l'ancien lien affiche aussitôt « Page introuvable », comme une page désactivée. Une version JSON est servie à la même adresse suivie de `.json` (détail dans [`docs/API.md`](docs/API.md#page-détat-publique-agent-060)).
 
+## Correction des failles
+
+Écran **Failles connues** (Réglages › Sécurité du serveur), agent 0.7 et accès complet. Sous chaque image vulnérable, Vigie indique ce qu'il peut faire, pourquoi, et le fait sur un appui (confirmation, puis empreinte si le verrouillage le demande) :
+
+- **Nouvelle version de l'image** : quand le registre publie une nouvelle version, Vigie la télécharge **sans l'installer**, lit ses paquets dans un conteneur créé mais jamais démarré, puis la compare à l'image en service : « La nouvelle version corrige 7 failles (dont 2 critiques), en ajoute 1 ». « Analyser la nouvelle version d'abord » fait seulement cette comparaison. « Installer la nouvelle version » la fait aussi, puis met à jour le conteneur comme d'habitude, avec retour à la version précédente. Une nouvelle version qui ne corrige aucune des failles n'est pas installée : Vigie corrige les paquets à la place si c'est possible.
+- **Correction des paquets système par Vigie** : pour les paquets Debian, Ubuntu ou Alpine vulnérables dont une version corrigée est publiée, Vigie crée une **image dérivée** où seuls ces paquets sont mis à niveau, puis recrée le conteneur dessus. Il garde la même référence (`ghcr.io/x/y:latest`) : Dockhand le voit toujours dans sa stack.
+- **Rien à faire** : pas de version corrigée connue, image sans shell ni gestionnaire de paquets (distroless, scratch), ou failles des dépendances de l'application (npm) que seule une nouvelle version de l'image peut corriger. Vigie l'explique ; « Signaler au projet » ouvre la page des tickets du dépôt source de l'image (label `org.opencontainers.image.source`).
+
+### Comment Vigie corrige une image
+
+1. Un **conteneur temporaire** est créé depuis l'image, en root, sans les volumes, variables ni réglages du conteneur d'origine (réseau `bridge`, 1 Go de mémoire au plus, 20 min au plus).
+2. Il met à niveau **uniquement** les paquets binaires issus des paquets vulnérables (champ `Source` de dpkg, origine apk) : `apt-get update` puis `apt-get install --only-upgrade --no-remove` (listes de paquets supprimées si l'image n'en avait pas), ou `apk upgrade --no-cache`. Les noms de paquets sont vérifiés et passés entre apostrophes, jamais interprétés.
+3. Vigie relit la base de paquets. **Si rien n'a changé** (les dépôts n'ont pas encore la version corrigée, ou sont injoignables), rien n'est recréé et il le dit.
+4. Sinon, `docker commit` crée l'image dérivée avec **exactement la configuration de l'image d'origine** (commande, point d'entrée, utilisateur, dossier, variables, ports, volumes, labels, healthcheck, signal d'arrêt…), plus des labels `vigie.vulnfix.*` (image d'origine, ses digests publiés, paquets mis à niveau, date). La configuration obtenue est comparée champ par champ à l'origine : au moindre écart, l'image est supprimée et rien ne change.
+5. Les conteneurs qui utilisent l'image sont **recréés à l'identique**, comme pour une mise à jour : réseaux, volumes, labels compose, conteneurs liés ; si le nouveau ne démarre pas, l'ancien revient tout seul.
+6. **Nouvelle analyse** de l'image corrigée et bilan : « 2 paquets mis à niveau — 7 failles corrigées, 3 restantes (sans correctif disponible) ». Notification à la fin si l'appli est fermée, événement dans la chronologie du conteneur.
+
+Une image déjà corrigée est refaite depuis son image d'origine (les paquets déjà mis à niveau le sont de nouveau) : pas d'empilement de couches, et si le résultat est identique, rien n'est recréé.
+
+### Revenir à l'image d'origine
+
+« Revenir à l'image d'origine » (écran Failles connues, fiche du conteneur ou chronologie) recrée le conteneur avec l'image non corrigée, re-téléchargée par son digest si le nettoyage l'a supprimée. La correction automatique de nuit ne la refait pas ensuite (« Autoriser » dans la fiche pour la réactiver) ; le bouton Corriger reste possible.
+
+### Mises à jour et nettoyage
+
+- Une image corrigée n'apparaît **pas** comme « MAJ disponible » tant que le registre publie la même version d'origine : Vigie compare le digest publié à celui de l'image d'origine, noté dans les labels. Une **vraie nouvelle version** est toujours détectée et s'installe normalement (bouton, stack, nuit) ; l'image corrigée devient alors l'ancienne version, pour le retour arrière. Un téléchargement qui ramène l'image d'origine ne défait pas la correction (« déjà à jour (image corrigée par Vigie) ») : pas de boucle corrige / réinstalle / corrige.
+- Les images corrigées remplacées deviennent des images inutilisées ordinaires : supprimées avec le réglage « Supprimer l'ancienne image » ou par le nettoyage du disque, comme les autres.
+
+### La nuit
+
+Désactivée par défaut. Failles connues › **Correction automatique** : tous les conteneurs ou une liste, et la gravité minimale (critiques, + élevées, + moyennes, toutes). Chaque nuit, **après l'analyse des failles** (une heure après les mises à jour automatiques, donc après elles : une faille corrigée par une nouvelle version n'est pas corrigée deux fois), une seule passe corrige l'une après l'autre les images concernées, par la mise à niveau des paquets uniquement (les nouvelles versions restent l'affaire des mises à jour automatiques). Jamais l'agent, ni un conteneur arrêté par toi ou ignoré, ni pendant la maintenance. Bilan au réveil comme les mises à jour de nuit (résumé des heures calmes compris).
+
+### Limites
+
+- Debian, Ubuntu et Alpine seulement, avec `sh` et `apt-get` ou `apk` dans l'image ; pas les images distroless ou scratch, ni les dépendances npm de l'application.
+- Le conteneur temporaire doit joindre les dépôts de paquets de l'image depuis le réseau `bridge` (`VIGIE_VULNFIX_NETWORK=host` pour un serveur où le réseau `bridge` n'a pas d'accès sortant).
+- Le correctif dépend des dépôts : une faille corrigée dans OSV mais pas encore dans les dépôts de la distribution reste (« le correctif n'est pas encore dans les dépôts »).
+- Si Dockhand ou `docker compose pull` re-télécharge l'image sans nouvelle version, compose peut recréer le conteneur avec l'image d'origine, non corrigée : la correction de nuit la refera, ou corrige-la depuis l'appli.
+- L'image corrigée n'a pas de digest de registre : Dockhand peut l'afficher comme une image locale.
+- Avec un socket-proxy, la correction demande aussi `COMMIT=1`.
+
 ## Connexions SSH
 
 L'agent lit le journal d'authentification de l'hôte par le montage `/:/host/root:ro` déjà présent : `/var/log/auth.log` (Debian, Ubuntu) ou `/var/log/secure` (RHEL, Oracle Linux), et `/var/log/fail2ban.log` s'il existe. Rien à installer sur le serveur.
@@ -338,6 +380,7 @@ L'agent tourne en root mais sans aucune capacité (`cap_drop: ALL`) : il ne lit 
 | `VIGIE_ORACLE` | auto | `true`/`false` pour forcer l'analyse Oracle Always Free (détectée via le noyau) |
 | `VIGIE_NET_MBPS` | auto | débit réseau de l'instance, pour le critère réseau d'Oracle |
 | `VIGIE_OSV_URL` | `https://api.osv.dev` | API OSV interrogée pour les failles connues (miroir, essais) |
+| `VIGIE_VULNFIX_NETWORK` | `bridge` | réseau du conteneur temporaire qui met les paquets à niveau (`host` si `bridge` n'a pas d'accès sortant) |
 | `FCM_SERVICE_ACCOUNT_B64` | — | compte de service Firebase (base64) |
 | `VIGIE_GEOIP` | GeoJS | pays des adresses des connexions SSH ; `off` : rien n'est envoyé |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | accepte aussi `tcp://socket-proxy:2375` |
@@ -346,7 +389,7 @@ L'agent tourne en root mais sans aucune capacité (`cap_drop: ALL`) : il ne lit 
 
 - Toutes les routes (sauf `/healthz` et la [page d'état publique](#page-détat-publique), protégée par son adresse secrète) exigent `Authorization: Bearer <token>`, comparé à temps constant.
 - Limitation de débit par IP ; 10 échecs d'authentification en 10 min → IP bloquée 15 min.
-- Actions possibles : **start, stop, restart** et **mise à jour d'image**. Une mise à jour ne télécharge que l'image déjà configurée sur le conteneur et le recrée avec sa configuration actuelle : l'appli ne peut fournir ni image ni configuration. L'agent refuse de s'arrêter lui-même.
+- Actions possibles : **start, stop, restart** et **mise à jour d'image**. Une mise à jour ne télécharge que l'image déjà configurée sur le conteneur et le recrée avec sa configuration actuelle : l'appli ne peut fournir ni image ni configuration. L'agent refuse de s'arrêter lui-même. La correction des failles (agent 0.7) ne fait que mettre à niveau, dans une image dérivée, des paquets déjà installés dans l'image, désignés par la base de paquets de l'image elle-même : l'appli choisit seulement l'image à corriger.
 - Chaque action est enregistrée dans un journal (date, IP, action, cible, résultat), consultable dans l'appli.
 - Les variables d'environnement des conteneurs ne sont jamais exposées.
 - Accès partagés : seule l'empreinte SHA-256 du jeton est conservée ; ils ne peuvent que consulter (ni action, ni réglage, ni logs, ni journal, ni canaux, debrid ou sauvegardes).
@@ -354,6 +397,6 @@ L'agent tourne en root mais sans aucune capacité (`cap_drop: ALL`) : il ne lit 
 - Sauvegardes : les clés du stockage restent sur l'agent. Elles ne sont jamais renvoyées à l'appli, ni écrites dans les logs, le journal ou la copie de la base ; changer l'adresse du stockage oblige à ressaisir la clé secrète. Comme les sauvegardes lisent le contenu des volumes choisis, garde le token aussi précieusement qu'un accès au serveur.
 - Restaurations : seulement une copie du stockage configuré, rangée dans le dossier de l'élément, sur un volume ou un dossier déjà monté par un conteneur (jamais un élément que l'agent modifie lui-même) ; extraction confinée à l'élément, dans un conteneur auxiliaire sans réseau, sans accès à Docker ni secret.
 
-Pour aller plus loin, tu peux placer un [socket-proxy](https://github.com/linuxserver/docker-socket-proxy) entre l'agent et Docker (`CONTAINERS=1`, `EVENTS=1`, `INFO=1`, `IMAGES=1`, `ALLOW_START=1`, `ALLOW_STOP=1`, `ALLOW_RESTARTS=1`, `POST=0` avec `VIGIE_ALLOW_UPDATES=false` ; pour les mises à jour depuis l'appli, ajoute `POST=1` et `NETWORKS=1` ; pour les restaurations, `POST=1`) et pointer `DOCKER_HOST` dessus.
+Pour aller plus loin, tu peux placer un [socket-proxy](https://github.com/linuxserver/docker-socket-proxy) entre l'agent et Docker (`CONTAINERS=1`, `EVENTS=1`, `INFO=1`, `IMAGES=1`, `ALLOW_START=1`, `ALLOW_STOP=1`, `ALLOW_RESTARTS=1`, `POST=0` avec `VIGIE_ALLOW_UPDATES=false` ; pour les mises à jour depuis l'appli, ajoute `POST=1` et `NETWORKS=1` ; pour les restaurations, `POST=1` ; pour la correction des failles, `POST=1`, `NETWORKS=1` et `COMMIT=1`) et pointer `DOCKER_HOST` dessus.
 
 L'API est décrite dans [`docs/API.md`](docs/API.md).

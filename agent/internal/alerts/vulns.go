@@ -43,6 +43,15 @@ func (e *Engine) OnVulns(r vulns.Report) {
 		for _, k := range sent[img.ID] {
 			known[k] = true
 		}
+		// Image corrigée par Vigie (agent 0.7.0) : les failles restantes ont déjà été signalées pour
+		// son image d'origine ; elles ne le sont pas une seconde fois.
+		base := ""
+		if img.Patched != nil {
+			base = img.Patched.BaseImage
+			for _, k := range sent[base] {
+				known[k] = true
+			}
+		}
 		var fresh []vulns.Vuln
 		for _, v := range img.Vulns {
 			if vulnQualifies(v, set.VulnAlert) && !known[v.ID+"|"+v.Package] {
@@ -71,6 +80,13 @@ func (e *Engine) OnVulns(r vulns.Report) {
 			sort.Strings(keys)
 			next[img.ID] = keys
 		}
+		if base != "" {
+			// Notées aussi pour l'image d'origine, gardées tant qu'une image corrigée en dérive :
+			// une correction refaite (nouvel ID d'image) ne les signale pas de nouveau.
+			if all := mergeKeys(next[base], append(append([]string{}, sent[base]...), keys...)); len(all) > 0 {
+				next[base] = all
+			}
+		}
 	}
 	raw, _ := json.Marshal(next)
 	if err := e.st.Set(e.ctx, vulnKey, string(raw)); err != nil {
@@ -80,6 +96,20 @@ func (e *Engine) OnVulns(r vulns.Report) {
 	for _, n := range notes {
 		e.dispatch(n, false, true)
 	}
+}
+
+// mergeKeys réunit deux listes triées de clés, sans doublon.
+func mergeKeys(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, k := range append(append([]string{}, a...), b...) {
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func vulnNotification(img vulns.Image, names []string, id string, list []vulns.Vuln) Notification {
@@ -130,9 +160,17 @@ func vulnNotification(img vulns.Image, names []string, id string, list []vulns.V
 	if len(parts) > 3 {
 		body = strings.Join(parts[:3], " · ") + fmt.Sprintf(" · et %d autre(s) paquet(s)", len(parts)-3)
 	}
-	if img.UpdateAvailable {
+	system := false
+	for _, v := range list {
+		system = system || vulns.SystemPackages(v.Ecosystem)
+	}
+	switch {
+	case img.UpdateAvailable:
 		body += ". Une nouvelle image est disponible : mets-la à jour depuis Vigie."
-	} else {
+	case system:
+		// Agent 0.7.0 : paquets système corrigeables par Vigie dans une image dérivée.
+		body += ". Vigie peut mettre ces paquets à niveau : Failles connues › Corriger."
+	default:
 		body += ". Mets à jour l'image si une nouvelle version est disponible."
 	}
 	n.Body = body

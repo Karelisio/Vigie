@@ -211,14 +211,7 @@ class Repository(
     suspend fun saveSettings(s: AgentSettings): AgentSettings {
         // Un agent plus ancien refuse les champs qu'il ne connaît pas : on n'envoie que ceux de sa version.
         val body = VigieJson.encodeToJsonElement(AgentSettings.serializer(), s).jsonObject
-        val known = when {
-            !live.value.updatesEnabled -> SETTINGS_0_2
-            !live.value.stackActions -> SETTINGS_0_2 + "prune_images"
-            versionAtLeast(live.value.agentVersion, 0, 6) -> body.keys
-            versionAtLeast(live.value.agentVersion, 0, 5) -> body.keys - SETTINGS_0_6
-            versionAtLeast(live.value.agentVersion, 0, 4) -> body.keys - SETTINGS_0_5 - SETTINGS_0_6
-            else -> SETTINGS_0_2 + "prune_images"
-        }
+        val known = settingsKeys(body.keys, live.value.agentVersion, live.value.updatesEnabled, live.value.stackActions)
         return api.put(requireServer(), "/api/v1/settings", JsonObject(body.filterKeys { it in known }))
     }
 
@@ -253,6 +246,9 @@ class Repository(
     }
 
     private fun started(job: AgentJob): AgentJob = job.also { activeSession.value?.patchJob(it) }
+
+    /** Opération lancée ailleurs (correction des failles…) : bannière et suivi tout de suite. */
+    internal fun trackJob(job: AgentJob): AgentJob = started(job)
 
     suspend fun updateContainer(id: String, pullOnly: Boolean = false): AgentJob =
         started(api.post(requireServer(), "/api/v1/containers/$id/update", UpdateRequest(pullOnly)))
@@ -330,6 +326,23 @@ private val SETTINGS_0_6 = setOf(
     "disk_forecast_days", "volume_growth_gb", "vuln_scan", "vuln_alert", "port_alert", "port_allow",
     "ssh_watch", "ssh_login_alert", "domains", "domain_days", "debrid_down_alert",
 )
+
+/** Champs de réglages apparus avec l'agent 0.7.0 (correction automatique des failles). */
+private val SETTINGS_0_7 = setOf("vuln_fix_auto", "vuln_fix_all", "vuln_fix_list", "vuln_fix_level")
+
+/**
+ * Champs de réglages qu'un agent connaît, selon sa version : un agent plus ancien refuse les champs
+ * inconnus. [keys] : tous les champs de l'appli.
+ */
+internal fun settingsKeys(keys: Set<String>, agentVersion: String, updatesEnabled: Boolean, stackActions: Boolean): Set<String> = when {
+    !updatesEnabled -> SETTINGS_0_2
+    !stackActions -> SETTINGS_0_2 + "prune_images"
+    versionAtLeast(agentVersion, 0, 7) -> keys
+    versionAtLeast(agentVersion, 0, 6) -> keys - SETTINGS_0_7
+    versionAtLeast(agentVersion, 0, 5) -> keys - SETTINGS_0_6 - SETTINGS_0_7
+    versionAtLeast(agentVersion, 0, 4) -> keys - SETTINGS_0_5 - SETTINGS_0_6 - SETTINGS_0_7
+    else -> SETTINGS_0_2 + "prune_images"
+}
 
 /** Compare une version « X.Y.Z » (les versions de développement sont considérées récentes). */
 internal fun versionAtLeast(version: String, major: Int, minor: Int): Boolean {

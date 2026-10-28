@@ -68,6 +68,12 @@ object OperationText {
         "backup" -> "Sauvegarde"
         "restore" -> "Restauration" + target(job)
         "rollback" -> "Retour à la version précédente" + target(job)
+        "vulnfix" -> when {
+            job.action == "analyze" -> "Analyse de la nouvelle version" + target(job)
+            job.target == "nightly" -> "Correctifs de la nuit"
+            job.target == "all" -> "Correction des failles"
+            else -> "Correction des failles" + target(job)
+        }
         else -> "Opération en cours"
     }
 
@@ -164,10 +170,11 @@ object OperationText {
             "backup" -> if (ok) "Sauvegarde terminée" else "Échec de la sauvegarde"
             "restore" -> if (ok) "Restauration terminée" else "Échec de la restauration"
             "rollback" -> if (ok) "Retour à la version précédente terminé" else "Échec du retour à la version précédente"
+            "vulnfix" -> vulnfixTitle(job)
             else -> if (ok) "Opération terminée" else "Échec de l'opération"
         }
         val text = job.message.removePrefix("Échec : ").ifBlank { job.error.orEmpty() }.ifBlank { if (ok) "Terminé" else "Erreur inconnue" }
-        val details = if (job.kind in GROUP_KINDS && job.results.size > 1) {
+        val details = if ((job.kind in GROUP_KINDS || job.kind == "vulnfix") && job.results.size > 1) {
             job.results.map { r ->
                 val line = if (r.name.isNotEmpty() && !r.message.startsWith(r.name)) "${r.name} : ${r.message}" else r.message.ifEmpty { r.name }
                 (if (r.ok) "✓ " else "✗ ") + line
@@ -176,6 +183,24 @@ object OperationText {
             emptyList()
         }
         return OperationOutcome(job.id, ok, title, text, details)
+    }
+
+    /** Titre du bilan d'une correction des failles (comme la notification de l'agent). */
+    private fun vulnfixTitle(job: AgentJob): String {
+        if (job.action == "analyze") {
+            return if (job.ok) "Nouvelle version de ${job.target} analysée" else "Échec de l'analyse de la nouvelle version"
+        }
+        val fixed = job.results.count { it.ok && it.updated }
+        val failed = job.results.count { !it.ok }
+        return when (job.target) {
+            "nightly" -> "Correctifs de la nuit : " + if (job.ok) "$fixed corrigé" + (if (fixed > 1) "s" else "") else "échec"
+            "all" -> if (job.ok) "Correction des failles terminée" else "Correction des failles : $failed échec" + if (failed > 1) "s" else ""
+            else -> when {
+                !job.ok -> "Échec de la correction de ${job.target}"
+                fixed > 0 -> "${job.target} : failles corrigées"
+                else -> "${job.target} : rien n'a changé"
+            }
+        }
     }
 
     /** Bilan de la mise à jour de l'agent, une fois la nouvelle version en ligne (ou l'ancienne rétablie). */

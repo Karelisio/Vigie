@@ -2,8 +2,10 @@ package alerts
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/karelisio/vigie/agent/internal/images"
 	"github.com/karelisio/vigie/agent/internal/vulns"
 )
 
@@ -106,5 +108,48 @@ func TestVulnAlertsOffAndMuted(t *testing.T) {
 	list, _ := st.Alerts(context.Background(), 1)
 	if list[0].Body != "p1 1.0-1 → 2 (CVE-a) · p2 1.0-1 → 2 (CVE-b) · p3 1.0-1 → 2 (CVE-c) · et 1 autre(s) paquet(s). Mets à jour l'image si une nouvelle version est disponible." {
 		t.Fatalf("%q", list[0].Body)
+	}
+}
+
+// Image corrigée par Vigie : les failles restantes, déjà signalées pour l'image d'origine, ne le sont pas
+// de nouveau, ni après une correction refaite (nouvel ID d'image).
+func TestVulnAlertsNotRepeatedForPatchedImage(t *testing.T) {
+	e, st := newEngine(t)
+	setVulnAlert(t, e, "critical")
+	r := vulnReport(false, vuln("1", "critical", "openssl", "3.0.15-1"), vuln("2", "critical", "zlib", "1.3"))
+	e.OnVulns(r)
+	if got := alertTitles(t, st); len(got) != 1 {
+		t.Fatalf("alertes : %q", got)
+	}
+	for i, id := range []string{"sha256:corrigee1", "sha256:corrigee2"} {
+		p := vulnReport(false, vuln("2", "critical", "zlib", "1.3"))
+		p.Images[0].ID = id
+		p.Images[0].Patched = &images.Patched{BaseImage: "sha256:aaaa"}
+		if i == 1 {
+			p.Images[0].Vulns = append(p.Images[0].Vulns, vuln("3", "critical", "curl", "8.0"))
+		}
+		e.OnVulns(p)
+	}
+	got := alertTitles(t, st)
+	if len(got) != 2 || got[0] != "critical comet : 2 failles critiques corrigées dans une version plus récente" || got[1] != "critical comet : 1 faille critique corrigée dans une version plus récente" {
+		t.Fatalf("alertes : %q", got)
+	}
+	list, _ := st.Alerts(context.Background(), 1)
+	if !strings.HasPrefix(list[0].Body, "curl 1.0-1 → 8.0") {
+		t.Fatalf("%q", list[0].Body)
+	}
+}
+
+// Paquets système sans nouvelle image (agent 0.7.0) : l'alerte propose la correction par Vigie.
+func TestVulnNotificationSuggestsFix(t *testing.T) {
+	v := vuln("1", "critical", "openssl", "3.0.15-1")
+	v.Ecosystem = "Debian:12"
+	n := vulnNotification(vulns.Image{}, []string{"comet"}, "c1", []vulns.Vuln{v})
+	if n.Body != "openssl 1.0-1 → 3.0.15-1 (CVE-1). Vigie peut mettre ces paquets à niveau : Failles connues › Corriger." {
+		t.Fatalf("%q", n.Body)
+	}
+	n = vulnNotification(vulns.Image{UpdateAvailable: true}, []string{"comet"}, "c1", []vulns.Vuln{v})
+	if n.Body != "openssl 1.0-1 → 3.0.15-1 (CVE-1). Une nouvelle image est disponible : mets-la à jour depuis Vigie." {
+		t.Fatalf("%q", n.Body)
 	}
 }

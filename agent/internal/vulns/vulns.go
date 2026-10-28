@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/karelisio/vigie/agent/internal/docker"
+	"github.com/karelisio/vigie/agent/internal/images"
 	"github.com/karelisio/vigie/agent/internal/settings"
 	"github.com/karelisio/vigie/agent/internal/store"
 )
@@ -137,6 +138,105 @@ type Image struct {
 	ReadAt          int64          `json:"read_at"` // lecture de l'inventaire (ms)
 	Vulns           []Vuln         `json:"vulns"`
 	More            int            `json:"more"` // failles non listées (au-delà de 200)
+	// Paquets qui ont une version corrigée, toutes failles comprises (agent 0.7.0).
+	Fixes []Fix `json:"fixes"`
+	// Image corrigée par Vigie (labels de l'image), nil sinon.
+	Patched *images.Patched `json:"patched,omitempty"`
+	// Dépôt source de l'image (label org.opencontainers.image.source), pour signaler une faille.
+	Source string `json:"source,omitempty"`
+}
+
+// Fix est un paquet vulnérable dont une version corrigée est publiée.
+type Fix struct {
+	Ecosystem string `json:"ecosystem"`
+	Package   string `json:"package"` // paquet source (Debian, Ubuntu), origine (Alpine) ou dépendance npm
+	Version   string `json:"version"` // installée
+	Fixed     string `json:"fixed"`   // version qui corrige toutes ses failles corrigées connues
+	Counts    Counts `json:"counts"`  // ces failles, par gravité
+}
+
+// fixesOf regroupe par paquet les failles qui ont une version corrigée (les plus graves d'abord).
+func fixesOf(all []Vuln) []Fix {
+	index := map[[3]string]int{}
+	out := []Fix{}
+	for _, v := range all {
+		if v.Fixed == "" {
+			continue
+		}
+		k := [3]string{v.Ecosystem, v.Package, v.Version}
+		i, ok := index[k]
+		if !ok {
+			i = len(out)
+			index[k] = i
+			out = append(out, Fix{Ecosystem: v.Ecosystem, Package: v.Package, Version: v.Version, Fixed: v.Fixed})
+		}
+		f := &out[i]
+		if compareVersions(v.Ecosystem, v.Fixed, f.Fixed) > 0 {
+			f.Fixed = v.Fixed
+		}
+		f.Counts.add(v)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].Counts, out[j].Counts
+		for _, p := range [][2]int{{a.Critical, b.Critical}, {a.High, b.High}, {a.Medium, b.Medium}, {a.Total(), b.Total()}} {
+			if p[0] != p[1] {
+				return p[0] > p[1]
+			}
+		}
+		return out[i].Package < out[j].Package
+	})
+	return out
+}
+
+// SystemPackages indique si l'écosystème est celui des paquets d'un système (Debian, Ubuntu, Alpine).
+func SystemPackages(eco string) bool {
+	switch ecoBase(eco) {
+	case "Debian", "Ubuntu", "Alpine":
+		return true
+	}
+	return false
+}
+
+// AtLeast indique si la gravité sev atteint le niveau level : critical, high, medium, ou low (toutes,
+// gravité inconnue comprise).
+func AtLeast(sev, level string) bool {
+	if level == "low" {
+		return true
+	}
+	r, ok := severityRank[level]
+	if !ok {
+		return false
+	}
+	s, ok := severityRank[sev]
+	return ok && s <= r
+}
+
+// CountAtLeast compte les failles d'au moins ce niveau.
+func (c Counts) CountAtLeast(level string) int {
+	n := 0
+	for _, p := range []struct {
+		sev string
+		n   int
+	}{{"critical", c.Critical}, {"high", c.High}, {"medium", c.Medium}, {"low", c.Low}, {"unknown", c.Unknown}} {
+		if AtLeast(p.sev, level) {
+			n += p.n
+		}
+	}
+	return n
+}
+
+// Plus additionne deux décomptes.
+func (c Counts) Plus(o Counts) Counts {
+	return Counts{c.Critical + o.Critical, c.High + o.High, c.Medium + o.Medium, c.Low + o.Low, c.Unknown + o.Unknown, c.Fixable + o.Fixable}
+}
+
+// CountVulns compte une liste de failles par gravité.
+func CountVulns(list []Vuln) Counts {
+	var c Counts
+	for _, v := range list {
+		c.add(v)
+	}
+	return c
 }
 
 // Progress décrit l'analyse en cours.
@@ -174,14 +274,20 @@ type Scanner struct {
 
 	// OnReport reçoit le résultat de chaque analyse réussie (alertes).
 	OnReport func(Report)
+	// OnNightly est appelé après l'analyse de la nuit (ou à sa place si une analyse vient d'avoir
+	// lieu) : correction automatique des failles (agent 0.7.0).
+	OnNightly func()
 
 	mu          sync.Mutex
 	report      Report
 	scanning    bool
 	again       bool // mise à jour d'image pendant une analyse : en relancer une ensuite
+	nightPass   bool // créneau de nuit atteint : OnNightly à la fin de l'analyse en cours
+	outdated    bool // résultat enregistré par un agent plus ancien : à refaire
 	progress    Progress
 	lastAttempt time.Time
 	updTimer    *time.Timer
+	meta        map[string]imageMeta // ID d'image → labels utiles (immuables)
 }
 
 func New(ctx context.Context, dk Docker, st *store.Store, set func() settings.Settings, log *slog.Logger, opt Options) *Scanner {
@@ -198,6 +304,7 @@ func New(ctx context.Context, dk Docker, st *store.Store, set func() settings.Se
 		updates: opt.UpdateAvailable,
 		now:     time.Now,
 		report:  Report{Images: []Image{}},
+		meta:    map[string]imageMeta{},
 	}
 	if s.updates == nil {
 		s.updates = func(string) bool { return false }
@@ -208,6 +315,13 @@ func New(ctx context.Context, dk Docker, st *store.Store, set func() settings.Se
 		if err := json.Unmarshal([]byte(raw), &r); err == nil {
 			if r.Images == nil {
 				r.Images = []Image{}
+			}
+			for _, img := range r.Images {
+				// Résultat d'un agent 0.6 : sans les paquets corrigeables, la correction des failles
+				// n'a rien à proposer. Nouvelle analyse peu après le démarrage.
+				if img.Fixes == nil && img.Counts.Fixable > 0 {
+					s.outdated = true
+				}
 			}
 			s.report = r
 		} else {
@@ -281,10 +395,22 @@ func (s *Scanner) tick(now time.Time) {
 
 	if at, due := nightlySlot(now, set.AutoUpdateTime, s.st.Get(s.ctx, nightlyKey)); due {
 		_ = s.st.Set(s.ctx, nightlyKey, at.Format(dayLayout))
-		if !never && now.Sub(last) < 3*time.Hour {
-			return // analyse récente (après les mises à jour de la nuit) : inutile de recommencer
+		s.mu.Lock()
+		busy := s.scanning
+		s.nightPass = true
+		s.mu.Unlock()
+		if !never && !busy && now.Sub(last) < 3*time.Hour {
+			// Analyse récente (après les mises à jour de la nuit) : inutile de recommencer.
+			s.mu.Lock()
+			s.nightPass = false
+			s.mu.Unlock()
+			s.nightly()
+			return
 		}
 		if err := s.Start("nightly"); err != nil && !errors.Is(err, ErrBusy) {
+			s.mu.Lock()
+			s.nightPass = false
+			s.mu.Unlock()
 			s.log.Warn("failles : analyse de nuit impossible", "erreur", err)
 		}
 		return
@@ -292,7 +418,11 @@ func (s *Scanner) tick(now time.Time) {
 	if now.Sub(s.started) < startupDelay || now.Sub(attempted) < retryAfter {
 		return
 	}
-	if never || now.Sub(last) > staleAfter {
+	s.mu.Lock()
+	outdated := s.outdated
+	s.outdated = false
+	s.mu.Unlock()
+	if never || outdated || now.Sub(last) > staleAfter {
 		_ = s.Start("auto")
 	}
 }
@@ -388,9 +518,25 @@ func (s *Scanner) scan(reason string) {
 	s.scanning = false
 	again := s.again
 	s.again = false
+	night := s.nightPass
+	s.nightPass = false
 	s.mu.Unlock()
+	if night {
+		if err == nil {
+			s.nightly()
+		} else {
+			s.log.Warn("failles : pas de correction automatique cette nuit, l'analyse a échoué")
+		}
+	}
 	if again && s.ctx.Err() == nil {
 		_ = s.Start("update")
+	}
+}
+
+// nightly appelle OnNightly en arrière-plan.
+func (s *Scanner) nightly() {
+	if s.OnNightly != nil && s.ctx.Err() == nil {
+		go s.OnNightly()
 	}
 }
 
@@ -419,6 +565,43 @@ func (s *Scanner) analyze(ctx context.Context) (Report, error) {
 		}
 	}
 
+	perImage, err := s.lookup(ctx, invs, s.setProgress)
+	if err != nil {
+		return Report{}, err
+	}
+
+	rep := Report{Images: make([]Image, 0, len(groups))}
+	for i, g := range groups {
+		inv := invs[i]
+		img := Image{
+			ID: g.id, Ref: g.ref, Containers: g.containers, OS: inv.OS, Ecosystem: inv.Eco,
+			Packages: inv.Count, Error: inv.Error, ReadAt: inv.ReadAt, Vulns: []Vuln{},
+		}
+		all := perImage[i]
+		img.Fixes = fixesOf(all)
+		for _, v := range all {
+			img.Counts.add(v)
+		}
+		if len(all) > maxListed {
+			img.More = len(all) - maxListed
+			all = all[:maxListed]
+		}
+		if all != nil {
+			img.Vulns = all
+		}
+		s.decorate(ctx, &img)
+		rep.Images = append(rep.Images, img)
+	}
+	s.prune(ctx, groups)
+	return rep, nil
+}
+
+// lookup interroge OSV pour les paquets des inventaires et renvoie, pour chacun, toutes ses failles
+// (triées, bulletins redondants retirés). progress (facultatif) suit l'avancement.
+func (s *Scanner) lookup(ctx context.Context, invs []Inventory, progress func(phase string, done, total int)) ([][]Vuln, error) {
+	if progress == nil {
+		progress = func(string, int, int) {}
+	}
 	// Une requête par paquet distinct, toutes images confondues.
 	index := map[[3]string]int{}
 	var queries []osvQuery
@@ -433,10 +616,10 @@ func (s *Scanner) analyze(ctx context.Context) (Report, error) {
 			queries = append(queries, q)
 		}
 	}
-	s.setProgress("query", 0, len(queries))
-	results, err := s.osv.queryBatch(ctx, queries, func(done int) { s.setProgress("query", done, len(queries)) })
+	progress("query", 0, len(queries))
+	results, err := s.osv.queryBatch(ctx, queries, func(done int) { progress("query", done, len(queries)) })
 	if err != nil {
-		return Report{}, err
+		return nil, err
 	}
 	refs := map[string]string{} // ID → date de modification
 	for _, r := range results {
@@ -444,18 +627,12 @@ func (s *Scanner) analyze(ctx context.Context) (Report, error) {
 			refs[v.ID] = v.Modified
 		}
 	}
-	records, err := s.records(ctx, refs)
+	records, err := s.records(ctx, refs, progress)
 	if err != nil {
-		return Report{}, err
+		return nil, err
 	}
-
-	rep := Report{Images: make([]Image, 0, len(groups))}
-	for i, g := range groups {
-		inv := invs[i]
-		img := Image{
-			ID: g.id, Ref: g.ref, Containers: g.containers, OS: inv.OS, Ecosystem: inv.Eco,
-			Packages: inv.Count, Error: inv.Error, ReadAt: inv.ReadAt, Vulns: []Vuln{},
-		}
+	out := make([][]Vuln, len(invs))
+	for i, inv := range invs {
 		var all []Vuln
 		for _, p := range inv.Packages {
 			for _, ref := range results[index[p]] {
@@ -468,27 +645,98 @@ func (s *Scanner) analyze(ctx context.Context) (Report, error) {
 		}
 		all = dropCoveredAdvisories(all, records)
 		sortVulns(all)
-		for _, v := range all {
-			img.Counts.add(v)
-		}
-		if len(all) > maxListed {
-			img.More = len(all) - maxListed
-			all = all[:maxListed]
-		}
-		if all != nil {
-			img.Vulns = all
-		}
-		rep.Images = append(rep.Images, img)
+		out[i] = all
 	}
-	s.prune(ctx, groups)
-	return rep, nil
+	return out, nil
+}
+
+// Assess recherche les failles connues des paquets d'un inventaire (liste complète). Sert à la
+// correction des failles : nouvelle version d'une image avant son installation, image corrigée.
+func (s *Scanner) Assess(ctx context.Context, inv Inventory) ([]Vuln, error) {
+	if !s.settings().VulnScan {
+		return nil, ErrDisabled
+	}
+	out, err := s.lookup(ctx, []Inventory{inv}, nil)
+	if err != nil {
+		return nil, err
+	}
+	return out[0], nil
+}
+
+// StoredInventory renvoie l'inventaire enregistré d'une image (false s'il manque ou est ancien).
+func (s *Scanner) StoredInventory(ctx context.Context, imageID string) (Inventory, bool) {
+	var inv Inventory
+	raw := s.st.VulnInventory(ctx, imageID)
+	if raw == "" || json.Unmarshal([]byte(raw), &inv) != nil || inv.V != inventoryVersion || inv.Error != "" {
+		return Inventory{}, false
+	}
+	return inv, true
+}
+
+// SaveInventory enregistre l'inventaire d'une image lu ailleurs (image corrigée, nouvelle version) :
+// l'analyse suivante n'aura pas à le relire.
+func (s *Scanner) SaveInventory(ctx context.Context, imageID string, inv Inventory) {
+	if inv.Error != "" || imageID == "" {
+		return
+	}
+	b, _ := json.Marshal(inv)
+	if err := s.st.SetVulnInventory(context.WithoutCancel(ctx), imageID, string(b), inv.ReadAt); err != nil {
+		s.log.Warn("failles : inventaire non enregistré", "image", imageID, "erreur", err)
+	}
+}
+
+// Rescan relance une analyse complète (après une correction) ; en cours : une autre suivra.
+func (s *Scanner) Rescan() {
+	if err := s.Start("vulnfix"); errors.Is(err, ErrBusy) {
+		s.mu.Lock()
+		s.again = true
+		s.mu.Unlock()
+	}
+}
+
+// imageMeta : ce que la configuration d'une image apporte au résultat (labels).
+type imageMeta struct {
+	patched *images.Patched
+	source  string
+}
+
+// decorate ajoute à l'image ce que disent ses labels : correction par Vigie, dépôt source.
+func (s *Scanner) decorate(ctx context.Context, img *Image) {
+	s.mu.Lock()
+	m, ok := s.meta[img.ID]
+	s.mu.Unlock()
+	if !ok {
+		dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		det, err := s.dk.ImageDetails(dctx, img.ID)
+		cancel()
+		if err != nil {
+			return // réessayé à la prochaine lecture
+		}
+		labels := images.LabelsOf(det.Config)
+		m = imageMeta{patched: images.PatchedFrom(labels), source: labels["org.opencontainers.image.source"]}
+		s.mu.Lock()
+		s.meta[img.ID] = m
+		s.mu.Unlock()
+	}
+	img.Patched, img.Source = m.patched, m.source
+}
+
+// Préfixes des conteneurs temporaires de la correction des failles (jamais analysés).
+const (
+	TempPatchPrefix   = "vigie-correctif-"
+	TempAnalyzePrefix = "vigie-analyse-"
+)
+
+// Temporary indique si le conteneur est un conteneur temporaire de la correction des failles.
+func Temporary(name string) bool {
+	return strings.HasPrefix(name, TempPatchPrefix) || strings.HasPrefix(name, TempAnalyzePrefix)
 }
 
 func groupByImage(list []docker.Container) []imageGroup {
 	byID := map[string]*imageGroup{}
 	var order []string
 	for _, c := range list {
-		if c.ImageID == "" {
+		if c.ImageID == "" || Temporary(c.Name()) {
 			continue
 		}
 		g := byID[c.ImageID]
@@ -566,7 +814,7 @@ func (s *Scanner) inventory(ctx context.Context, g imageGroup) Inventory {
 
 // records renvoie les fiches des failles trouvées : depuis le cache si elles n'ont pas changé
 // (date de modification) et ont moins de 3 jours, sinon depuis OSV.
-func (s *Scanner) records(ctx context.Context, refs map[string]string) (map[string]*record, error) {
+func (s *Scanner) records(ctx context.Context, refs map[string]string, progress func(string, int, int)) (map[string]*record, error) {
 	ids := make([]string, 0, len(refs))
 	for id := range refs {
 		ids = append(ids, id)
@@ -593,7 +841,7 @@ func (s *Scanner) records(ctx context.Context, refs map[string]string) (map[stri
 		fetch = append(fetch, id)
 	}
 
-	fetched, failed := s.fetch(ctx, fetch, "details")
+	fetched, failed := s.fetch(ctx, fetch, "details", progress)
 	if ctx.Err() != nil {
 		return nil, errors.New("analyse interrompue (délai dépassé)")
 	}
@@ -642,7 +890,7 @@ func (s *Scanner) records(ctx context.Context, refs map[string]string) (map[stri
 				missing = append(missing, id)
 			}
 		}
-		got, _ := s.fetch(ctx, missing, "details")
+		got, _ := s.fetch(ctx, missing, "details", progress)
 		for id, r := range got {
 			cves[id] = r
 			fetched[id] = r // en cache aussi
@@ -673,7 +921,7 @@ func (s *Scanner) records(ctx context.Context, refs map[string]string) (map[stri
 }
 
 // fetch lit des fiches OSV (4 à la fois, 5000 au plus par analyse) ; failed compte les échecs.
-func (s *Scanner) fetch(ctx context.Context, ids []string, phase string) (map[string]*record, int) {
+func (s *Scanner) fetch(ctx context.Context, ids []string, phase string, progress func(string, int, int)) (map[string]*record, int) {
 	out := map[string]*record{}
 	if len(ids) > maxDetailFetches {
 		ids = ids[:maxDetailFetches]
@@ -707,11 +955,11 @@ func (s *Scanner) fetch(ctx context.Context, ids []string, phase string) (map[st
 				done++
 				n := done
 				mu.Unlock()
-				s.setProgress(phase, n, len(ids))
+				progress(phase, n, len(ids))
 			}
 		}()
 	}
-	s.setProgress(phase, 0, len(ids))
+	progress(phase, 0, len(ids))
 	for _, id := range ids {
 		select {
 		case jobs <- id:
@@ -735,6 +983,17 @@ func (s *Scanner) prune(ctx context.Context, groups []imageGroup) {
 	if err := s.st.PruneVulnInventories(ctx, keep); err != nil {
 		s.log.Warn("failles : nettoyage des inventaires", "erreur", err)
 	}
+	inUse := map[string]bool{}
+	for _, id := range keep {
+		inUse[id] = true
+	}
+	s.mu.Lock()
+	for id := range s.meta {
+		if !inUse[id] {
+			delete(s.meta, id)
+		}
+	}
+	s.mu.Unlock()
 	if err := s.st.PruneVulnRecords(ctx, s.now().Add(-recordKeep).UnixMilli()); err != nil {
 		s.log.Warn("failles : nettoyage du cache", "erreur", err)
 	}
@@ -879,6 +1138,10 @@ func (s *Scanner) live(ctx context.Context, rep Report, refresh bool) Report {
 		for _, c := range img.Containers {
 			img.UpdateAvailable = img.UpdateAvailable || s.updates(c.Name)
 		}
+		if img.Fixes == nil {
+			img.Fixes = []Fix{} // résultat d'un agent 0.6 : rempli à la prochaine analyse
+		}
+		s.decorate(ctx, img)
 	}
 	sort.SliceStable(rep.Images, func(i, j int) bool { return worse(rep.Images[i], rep.Images[j]) })
 	rep.Totals = totals(rep.Images)

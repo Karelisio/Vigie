@@ -102,7 +102,7 @@ func collect() (*[]Package, func(Package)) {
 
 func TestDpkgPackagesUseSource(t *testing.T) {
 	list, add := collect()
-	n, err := dpkgPackages(strings.NewReader(dpkgStatus), "Debian:12", add)
+	n, err := dpkgPackages(strings.NewReader(dpkgStatus), "Debian:12", add, nil)
 	if err != nil || n != 5 {
 		t.Fatalf("%d paquets (%v)", n, err)
 	}
@@ -121,7 +121,7 @@ func TestDpkgPackagesUseSource(t *testing.T) {
 func TestApkPackagesUseOrigin(t *testing.T) {
 	db := "C:Q1abc=\nP:libcrypto3\nV:3.3.2-r0\nA:aarch64\no:openssl\nT:Crypto library\n\nP:busybox\nV:1.36.1-r29\n\nP:musl\nV:1.2.5-r0\no:musl\n"
 	list, add := collect()
-	n, err := apkPackages(strings.NewReader(db), "Alpine:v3.20", add)
+	n, err := apkPackages(strings.NewReader(db), "Alpine:v3.20", add, nil)
 	if err != nil || n != 3 {
 		t.Fatalf("%d (%v)", n, err)
 	}

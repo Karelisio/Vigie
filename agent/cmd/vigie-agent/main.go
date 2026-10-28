@@ -37,6 +37,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/system"
 	"github.com/karelisio/vigie/agent/internal/traffic"
 	"github.com/karelisio/vigie/agent/internal/updater"
+	"github.com/karelisio/vigie/agent/internal/vulnfix"
 	"github.com/karelisio/vigie/agent/internal/vulns"
 )
 
@@ -164,7 +165,9 @@ func run(log *slog.Logger) error {
 				result = j.Error
 			}
 			st.Audit(context.Background(), "agent", "résultat", j.Target, result+" — "+j.Message, "vigie")
-			if j.Action == "update" && j.Kind != "self" {
+			// Mise à jour ou correction des failles : consommation comparée à la veille (alerte de
+			// surconsommation avec retour arrière), nouvelle analyse des images.
+			if (j.Action == "update" && j.Kind != "self") || j.Action == "vulnfix" {
 				var updated []string
 				for _, r := range j.Results {
 					if r.Updated && r.Name != "" {
@@ -172,12 +175,13 @@ func run(log *slog.Logger) error {
 					}
 				}
 				reg.OnUpdated(context.Background(), updated, time.UnixMilli(j.FinishedAt))
-				if len(updated) > 0 {
-					vs.ImagesUpdated()
+				if len(updated) > 0 && j.Action == "update" {
+					vs.ImagesUpdated() // la correction relance elle-même l'analyse
 				}
 			}
 			if j.Kind == "rollback" && j.OK {
 				reg.Forget(context.Background(), j.Target) // plus de comparaison avec la version écartée
+				vs.ImagesUpdated()                         // l'image rétablie est analysée de nouveau
 			}
 			if j.Kind == "backup" {
 				// Sauvegardes : un échec est une alerte à part entière, même appli ouverte.
@@ -203,6 +207,13 @@ func run(log *slog.Logger) error {
 	// Retour à la version précédente : version écartée ignorée, bouton sur l'alerte de surconsommation.
 	mon.IgnoredDigest = upd.IgnoredDigest
 	eng.Rollback = upd.CanRollback
+
+	// Correction des failles (nouvelle version analysée avant installation, ou paquets système mis à
+	// niveau dans une image dérivée) : à la demande, et la nuit après l'analyse des failles.
+	fix := vulnfix.New(ctx, dk, upd, vs, mon, set.Get, st, log, vulnfix.Options{
+		SelfID: mon.SelfID(), Network: os.Getenv("VIGIE_VULNFIX_NETWORK"),
+	})
+	vs.OnNightly = fix.Nightly
 	if r := updater.LastSelfUpdate(cfg.DataDir); r != nil && time.Since(time.UnixMilli(r.TS)) < 10*time.Minute {
 		if r.OK {
 			log.Info("agent mis à jour", "depuis", r.From, "vers", version)
@@ -243,6 +254,7 @@ func run(log *slog.Logger) error {
 	}
 	apiSrv.StatusPage = sp
 	apiSrv.Vulns = vs
+	apiSrv.VulnFix = fix
 	apiSrv.Ports = portScan
 	apiSrv.SSH = sshWatch
 	srv := &http.Server{

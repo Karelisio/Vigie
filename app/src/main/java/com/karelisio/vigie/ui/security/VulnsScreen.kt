@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -51,6 +53,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -67,20 +70,30 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.karelisio.vigie.appContainer
+import com.karelisio.vigie.data.AgentJob
 import com.karelisio.vigie.data.AgentSettings
 import com.karelisio.vigie.data.ApiException
+import com.karelisio.vigie.data.FixPlan
+import com.karelisio.vigie.data.FixPlans
 import com.karelisio.vigie.data.Fmt
+import com.karelisio.vigie.data.LiveEvent
 import com.karelisio.vigie.data.Vuln
 import com.karelisio.vigie.data.VulnImage
 import com.karelisio.vigie.data.VulnReport
 import com.karelisio.vigie.data.VulnSeverities
+import com.karelisio.vigie.data.analyzeNewVersion
+import com.karelisio.vigie.data.fixAllVulns
+import com.karelisio.vigie.data.fixVulns
 import com.karelisio.vigie.data.scanVulns
 import com.karelisio.vigie.data.severityLabel
 import com.karelisio.vigie.data.versionAtLeast
+import com.karelisio.vigie.data.vulnFixes
 import com.karelisio.vigie.data.vulnReport
 import com.karelisio.vigie.data.vulns
+import com.karelisio.vigie.security.LocalActionGuard
 import com.karelisio.vigie.ui.components.Chip
 import com.karelisio.vigie.ui.components.EmptyState
+import com.karelisio.vigie.ui.components.JobBanner
 import com.karelisio.vigie.ui.components.ScreenHeader
 import com.karelisio.vigie.ui.components.SectionCard
 import com.karelisio.vigie.ui.components.StatusDot
@@ -122,10 +135,22 @@ class VulnsViewModel : ViewModel() {
     private var startedFrom: VulnReport? = null
     private val _finished = MutableSharedFlow<Pair<VulnReport, VulnReport>>(extraBufferCapacity = 1)
     val finished = _finished.asSharedFlow()
+    /** Correction proposée pour chaque image (agent 0.7.0 ; null avant, ou en lecture seule). */
+    private val _plans = MutableStateFlow<FixPlans?>(null)
+    val plans = _plans.asStateFlow()
 
     init {
         load()
         viewModelScope.launch { runCatching { repo.settings() }.onSuccess { _settings.value = it } }
+        // Fin d'une correction, d'une mise à jour ou d'un retour arrière : failles et corrections relues.
+        viewModelScope.launch {
+            repo.events.collect { e ->
+                if (e is LiveEvent.JobDone && e.job.kind in REFRESH_KINDS) {
+                    delay(1500)
+                    load()
+                }
+            }
+        }
     }
 
     fun load() {
@@ -134,6 +159,17 @@ class VulnsViewModel : ViewModel() {
             runCatching { repo.vulns() }
                 .onSuccess { follow(it) }
                 .onFailure { if ((it as? ApiException)?.code == 404) _unsupported.value = true else _error.value = it.message }
+        }
+        loadPlans()
+    }
+
+    private fun loadPlans() {
+        val live = repo.live.value
+        if (live.readOnly || (live.agentVersion.isNotEmpty() && !versionAtLeast(live.agentVersion, 0, 7))) return
+        viewModelScope.launch {
+            runCatching { repo.vulnFixes() }
+                .onSuccess { _plans.value = it }
+                .onFailure { if ((it as? ApiException)?.code == 404) _plans.value = null }
         }
     }
 
@@ -151,9 +187,21 @@ class VulnsViewModel : ViewModel() {
     }
 
     private fun finish(r: VulnReport) {
+        if (poll != null) loadPlans() // analyse terminée : corrections recalculées
         val before = startedFrom ?: return
         startedFrom = null
         _finished.tryEmit(before to r)
+    }
+
+    /** Corrige une image par la voie proposée (opération suivie comme une mise à jour). */
+    suspend fun fix(plan: FixPlan): Result<AgentJob> = runCatching { repo.fixVulns(plan.target) }
+
+    suspend fun fixAll(): Result<AgentJob> = runCatching { repo.fixAllVulns() }
+
+    suspend fun analyze(plan: FixPlan): Result<AgentJob> = runCatching { repo.analyzeNewVersion(plan.target) }
+
+    private companion object {
+        val REFRESH_KINDS = setOf("vulnfix", "rollback", "update", "batch", "auto", "stack")
     }
 
     suspend fun scan(): Result<VulnReport> {
@@ -188,15 +236,53 @@ fun VulnsScreen(nav: NavHostController, vm: VulnsViewModel = viewModel()) {
     val error by vm.error.collectAsStateWithLifecycle()
     val unsupportedApi by vm.unsupported.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val plans by vm.plans.collectAsStateWithLifecycle()
     val live by appContainer.repository.live.collectAsStateWithLifecycle()
     val unsupported = unsupportedApi || (live.agentVersion.isNotEmpty() && !versionAtLeast(live.agentVersion, 0, 6))
+    // Correction des failles : agent 0.7.0, accès complet.
+    val fixes = plans.takeIf { !live.readOnly && !unsupported && (live.agentVersion.isEmpty() || versionAtLeast(live.agentVersion, 0, 7)) }
+    val busy = live.runningJob != null
     var fixableOnly by rememberSaveable { mutableStateOf(false) }
+    var confirmFix by remember { mutableStateOf<FixPlan?>(null) }
+    var confirmAll by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val snackbar = LocalSnackbar.current
     val haptics = rememberHaptics()
+    val guard = LocalActionGuard.current
     val uri = LocalUriHandler.current
     val now = rememberNow(30_000)
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 32.dp
+
+    fun launchJob(label: String, action: suspend () -> Result<AgentJob>) {
+        scope.launch {
+            if (!guard(label)) return@launch
+            action().onFailure {
+                haptics.reject()
+                snackbar.showSnackbar("Échec : ${it.message}")
+            }
+        }
+    }
+
+    confirmFix?.let { plan ->
+        FixDialog(
+            plan, plan.route,
+            onConfirm = {
+                confirmFix = null
+                launchJob("Corriger les failles de ${plan.target}") { vm.fix(plan) }
+            },
+            onDismiss = { confirmFix = null },
+        )
+    }
+    if (confirmAll && fixes != null) {
+        FixAllDialog(
+            fixes,
+            onConfirm = {
+                confirmAll = false
+                launchJob("Corriger les failles de toutes les images") { vm.fixAll() }
+            },
+            onDismiss = { confirmAll = false },
+        )
+    }
 
     // Analyse lancée depuis l'écran : bilan à la fin (nouvelle analyse réussie ou nouvelle erreur).
     LaunchedEffect(vm) {
@@ -274,6 +360,18 @@ fun VulnsScreen(nav: NavHostController, vm: VulnsViewModel = viewModel()) {
             }
             else -> {
                 item { SummaryCard(r, now, vm.starting, ::scanNow, Modifier.cascade(0)) }
+                if (fixes != null && (fixes.totals.fixable > 0 || !fixes.enabled)) {
+                    item(key = "fix-all") {
+                        Column(Modifier.cascade(1)) {
+                            FixAllCard(fixes, busy, onFixAll = { confirmAll = true })
+                            // Passe « tout corriger » ou de nuit en cours.
+                            live.jobs.firstOrNull { it.kind == "vulnfix" && !it.done && (it.target == "all" || it.target == "nightly") }?.let {
+                                Spacer(Modifier.height(8.dp))
+                                JobBanner(it)
+                            }
+                        }
+                    }
+                }
                 val vulnerable = r.images.filter { it.counts.total > 0 }
                 val clean = r.images.filter { it.counts.total == 0 }
                 if (vulnerable.isNotEmpty()) {
@@ -287,15 +385,34 @@ fun VulnsScreen(nav: NavHostController, vm: VulnsViewModel = viewModel()) {
                     }
                 }
                 itemsIndexed(vulnerable, key = { _, img -> img.id }) { i, img ->
+                    val plan = fixes?.plan(img.id)
                     ImageCard(
                         img, fixableOnly,
                         onLink = { url -> haptics.tick(); runCatching { uri.openUri(url) } },
                         onContainer = { id, name -> haptics.tick(); nav.navigate(ContainerRoute(id, name)) },
                         modifier = Modifier.animateItem().cascade(i + 2),
+                        fix = plan?.let { p ->
+                            {
+                                PatchedBadge(p, busy)
+                                Spacer(Modifier.height(8.dp))
+                                FixSection(
+                                    p,
+                                    job = live.jobs.firstOrNull { j -> j.kind == "vulnfix" && p.containers.any { c -> j.target == c.name } },
+                                    busy = busy,
+                                    onFix = { pl, _ -> confirmFix = pl },
+                                    onAnalyze = { pl -> launchJob("Analyser la nouvelle version de ${pl.target}") { vm.analyze(pl) } },
+                                    onLink = { url -> haptics.tick(); runCatching { uri.openUri(url) } },
+                                )
+                            }
+                        },
                     )
                 }
                 if (clean.isNotEmpty()) {
-                    item(key = "clean") { CleanCard(clean, Modifier.animateItem().cascade(vulnerable.size + 2)) }
+                    item(key = "clean") {
+                        CleanCard(clean, Modifier.animateItem().cascade(vulnerable.size + 2)) { img ->
+                            fixes?.plan(img.id)?.takeIf { it.patched != null }?.let { PatchedBadge(it, busy) }
+                        }
+                    }
                 }
             }
         }
@@ -308,6 +425,15 @@ fun VulnsScreen(nav: NavHostController, vm: VulnsViewModel = viewModel()) {
                         onLevel = { level -> haptics.tick(); saveSettings { it.copy(vulnAlert = level) } },
                         modifier = Modifier.cascade(r?.images?.size?.plus(3) ?: 3),
                     )
+                }
+                if (fixes != null && fixes.enabled) {
+                    item(key = "night-fix") {
+                        NightFixCard(
+                            s, fixes.nightly, live.containers,
+                            onChange = { next -> saveSettings { next } },
+                            modifier = Modifier.cascade(r?.images?.size?.plus(4) ?: 4),
+                        )
+                    }
                 }
             }
         }
@@ -445,6 +571,8 @@ private fun ImageCard(
     onLink: (String) -> Unit,
     onContainer: (id: String, name: String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Correction proposée (agent 0.7.0) ; sinon, lien vers la fiche si une mise à jour est publiée. */
+    fix: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     val status = Vigie.status
@@ -487,6 +615,9 @@ private fun ImageCard(
             if (img.updateAvailable) {
                 Chip("MAJ disponible", scheme.primaryContainer, scheme.onPrimaryContainer, icon = Icons.Rounded.SystemUpdate)
             }
+            if (img.patched != null) {
+                Chip("Corrigée par Vigie", status.okContainer, status.onOkContainer, icon = Icons.Rounded.Verified)
+            }
         }
         if (img.error.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
@@ -512,7 +643,10 @@ private fun ImageCard(
             )
         }
         val target = img.containers.firstOrNull()
-        if (img.updateAvailable && target != null) {
+        if (fix != null) {
+            Spacer(Modifier.height(12.dp))
+            fix()
+        } else if (img.updateAvailable && target != null) {
             Spacer(Modifier.height(8.dp))
             FilledTonalButton(
                 onClick = { onContainer(target.id, target.name) },
@@ -573,9 +707,9 @@ private fun VulnRow(v: Vuln, onClick: () -> Unit) {
     }
 }
 
-/** Images sans faille connue, regroupées. */
+/** Images sans faille connue, regroupées ; [extra] : sous chaque image (image corrigée par Vigie). */
 @Composable
-private fun CleanCard(images: List<VulnImage>, modifier: Modifier = Modifier) {
+private fun CleanCard(images: List<VulnImage>, modifier: Modifier = Modifier, extra: @Composable (VulnImage) -> Unit = {}) {
     val scheme = MaterialTheme.colorScheme
     SectionCard(modifier, title = "Sans faille connue") {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -597,6 +731,7 @@ private fun CleanCard(images: List<VulnImage>, modifier: Modifier = Modifier) {
                         Icon(Icons.Rounded.SystemUpdate, "MAJ disponible", Modifier.size(18.dp), tint = scheme.primary)
                     }
                 }
+                Column(Modifier.padding(start = 18.dp)) { extra(img) }
             }
         }
     }

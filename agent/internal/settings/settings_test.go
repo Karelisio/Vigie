@@ -102,3 +102,26 @@ func TestSettings06Validation(t *testing.T) {
 		}
 	}
 }
+
+// Correction automatique des failles (agent 0.7.0) : désactivée par défaut, niveau « élevée ».
+func TestVulnFixSettings(t *testing.T) {
+	base := Settings{CPU: 90, RAM: 90, Disk: 90, DurationMin: 5, CertDays: 14, NetQuotaAlert: 80, NetQuotaTB: 10}
+	s := base
+	s.VulnFixList = []string{"/comet", "redis", "comet", ""}
+	if err := s.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if s.VulnFixAuto || s.VulnFixAll || s.VulnFixLevel != "high" || !slices.Equal(s.VulnFixList, []string{"comet", "redis"}) {
+		t.Fatalf("%+v", s)
+	}
+	for _, level := range []string{"critical", "high", "medium", "low"} {
+		s.VulnFixLevel = level
+		if err := s.validate(); err != nil {
+			t.Errorf("%s refusé : %v", level, err)
+		}
+	}
+	s.VulnFixLevel = "unknown"
+	if s.validate() == nil {
+		t.Error("niveau inconnu accepté")
+	}
+}

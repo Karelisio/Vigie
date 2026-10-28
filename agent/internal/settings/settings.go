@@ -71,6 +71,13 @@ type Settings struct {
 	VulnScan  bool   `json:"vuln_scan"`
 	VulnAlert string `json:"vuln_alert"` // critical, high ou off
 
+	// Correction automatique des failles la nuit, après l'analyse (agent 0.7.0) : paquets système
+	// mis à niveau dans une image dérivée, conteneurs recréés.
+	VulnFixAuto  bool     `json:"vuln_fix_auto"`
+	VulnFixAll   bool     `json:"vuln_fix_all"`   // tous les conteneurs (sinon VulnFixList)
+	VulnFixList  []string `json:"vuln_fix_list"`  // noms des conteneurs concernés
+	VulnFixLevel string   `json:"vuln_fix_level"` // gravité minimale corrigée : critical, high, medium ou low (toutes)
+
 	// Ports ouverts sur Internet : alerte à l'apparition d'un port non autorisé.
 	PortAlert bool     `json:"port_alert"`
 	PortAllow []string `json:"port_allow"` // « 443/tcp », « 51820/udp »…
@@ -201,6 +208,14 @@ func (s *Settings) validate() error {
 	case "critical", "high", "off":
 	default:
 		return fmt.Errorf("niveau d'alerte des failles invalide %q (critical, high ou off)", s.VulnAlert)
+	}
+	s.VulnFixList = cleanNames(s.VulnFixList)
+	switch s.VulnFixLevel {
+	case "":
+		s.VulnFixLevel = "high"
+	case "critical", "high", "medium", "low":
+	default:
+		return fmt.Errorf("gravité minimale de la correction automatique invalide %q (critical, high, medium ou low)", s.VulnFixLevel)
 	}
 	ports, err := cleanPorts(s.PortAllow)
 	if err != nil {
@@ -358,6 +373,8 @@ func Load(ctx context.Context, st *store.Store, cfg *config.Config) *Manager {
 		VolumeGrowthGB:   5,
 		VulnScan:         true,
 		VulnAlert:        "critical",
+		VulnFixList:      []string{},
+		VulnFixLevel:     "high",
 		PortAlert:        true,
 		PortAllow:        []string{},
 		SSHWatch:         true,
@@ -385,6 +402,7 @@ func (m *Manager) Get() Settings {
 	cp.AutoHealList = append([]string{}, m.s.AutoHealList...)
 	cp.PortAllow = append([]string{}, m.s.PortAllow...)
 	cp.Domains = append([]string{}, m.s.Domains...)
+	cp.VulnFixList = append([]string{}, m.s.VulnFixList...)
 	return cp
 }
 

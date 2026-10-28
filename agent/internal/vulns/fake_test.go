@@ -88,7 +88,8 @@ type fakeContainer struct {
 type fakeDocker struct {
 	mu         sync.Mutex
 	containers []fakeContainer
-	workDirs   map[string]string // ID d'image → WorkingDir
+	workDirs   map[string]string            // ID d'image → WorkingDir
+	labels     map[string]map[string]string // ID d'image → labels
 	archives   int
 	srv        *httptest.Server
 }
@@ -138,7 +139,7 @@ func (f *fakeDocker) serve(w http.ResponseWriter, r *http.Request) {
 		send(200, out)
 		return
 	case len(parts) == 3 && parts[0] == "images":
-		send(200, map[string]any{"Id": parts[1], "Config": map[string]any{"WorkingDir": f.workDirs[parts[1]]}})
+		send(200, map[string]any{"Id": parts[1], "Config": map[string]any{"WorkingDir": f.workDirs[parts[1]], "Labels": f.labels[parts[1]]}})
 		return
 	case len(parts) == 3 && parts[0] == "containers":
 		for _, c := range f.containers {

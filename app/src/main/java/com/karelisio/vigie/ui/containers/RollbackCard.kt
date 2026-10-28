@@ -105,11 +105,15 @@ internal fun RollbackSection(rb: RollbackController, busy: Boolean) {
         ) {
             Icon(Icons.AutoMirrored.Rounded.Undo, null)
             Spacer(Modifier.width(8.dp))
-            Text("Revenir à cette version")
+            Text(if (p.vulnfix) "Revenir à l'image d'origine" else "Revenir à cette version")
         }
     } else if (p.rolledBack) {
         Spacer(Modifier.height(12.dp))
-        InfoRow("Revenu en version ${p.oldLabel} le ${Fmt.dateTime(p.rolledBackAt)}", null)
+        InfoRow(
+            if (p.vulnfix) "Revenu à l'image d'origine le ${Fmt.dateTime(p.rolledBackAt)}"
+            else "Revenu en version ${p.oldLabel} le ${Fmt.dateTime(p.rolledBackAt)}",
+            null,
+        )
     }
     AnimatedVisibility(p.ignored) {
         Column {
@@ -118,9 +122,10 @@ internal fun RollbackSection(rb: RollbackController, busy: Boolean) {
                 Icon(Icons.Rounded.VisibilityOff, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Version ${p.newLabel} ignorée", style = MaterialTheme.typography.bodyMedium)
+                    Text(if (p.vulnfix) "Correction écartée" else "Version ${p.newLabel} ignorée", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "Les mises à jour automatiques ne la réinstallent pas, une version plus récente si.",
+                        if (p.vulnfix) "La correction automatique de nuit ne la refait pas. Le bouton Corriger reste possible."
+                        else "Les mises à jour automatiques ne la réinstallent pas, une version plus récente si.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -135,12 +140,18 @@ internal fun RollbackSection(rb: RollbackController, busy: Boolean) {
                             r.onSuccess { rb.replace(it) }.onFailure { haptics.reject() }
                             snackbar.currentSnackbarData?.dismiss()
                             snackbar.showSnackbar(
-                                r.fold({ "La version ${p.newLabel} de ${rb.name} n'est plus ignorée" }, { "Échec : ${it.message}" }),
+                                r.fold(
+                                    {
+                                        if (p.vulnfix) "La correction automatique de ${rb.name} est de nouveau possible"
+                                        else "La version ${p.newLabel} de ${rb.name} n'est plus ignorée"
+                                    },
+                                    { "Échec : ${it.message}" },
+                                ),
                             )
                         }
                     },
                     enabled = !saving,
-                ) { Text("Ne plus ignorer") }
+                ) { Text(if (p.vulnfix) "Autoriser" else "Ne plus ignorer") }
             }
         }
     }
@@ -161,7 +172,14 @@ private fun InfoRow(text: String, note: String?) {
 }
 
 /** Ce que le retour va faire, expliqué avant confirmation. */
-internal fun rollbackExplanation(name: String, p: RollbackPoint): String = buildString {
+internal fun rollbackExplanation(name: String, p: RollbackPoint): String = if (p.vulnfix) {
+    buildString {
+        append("$name sera recréé avec son image d'origine (${p.oldLabel}), sans les paquets mis à niveau par Vigie : ")
+        append("mêmes réglages, réseaux et volumes, quelques secondes de coupure. Les failles corrigées réapparaîtront ")
+        append("et la correction automatique de nuit ne la refera pas ; le bouton Corriger reste possible.")
+        if (!p.imagePresent) append(" L'image d'origine a été supprimée du disque : elle sera re-téléchargée.")
+    }
+} else buildString {
     append("$name sera recréé avec sa version ${p.oldLabel}")
     if (p.updatedAt > 0) append(", celle d'avant la mise à jour du ${Fmt.dateTime(p.updatedAt)}")
     append(" : mêmes réglages, réseaux et volumes, quelques secondes de coupure. ")
@@ -182,13 +200,13 @@ internal fun RollbackDialog(rb: RollbackController) {
     AlertDialog(
         onDismissRequest = { rb.confirm = false },
         icon = { Icon(Icons.AutoMirrored.Rounded.Undo, null) },
-        title = { Text("Revenir à la version ${p.oldLabel} de ${rb.name} ?") },
+        title = { Text(if (p.vulnfix) "Revenir à l'image d'origine de ${rb.name} ?" else "Revenir à la version ${p.oldLabel} de ${rb.name} ?") },
         text = { Text(rollbackExplanation(rb.name, p)) },
         confirmButton = {
             TextButton(onClick = {
                 rb.confirm = false
                 scope.launch {
-                    if (!guard("Revenir à la version précédente de ${rb.name}")) return@launch
+                    if (!guard(if (p.vulnfix) "Revenir à l'image d'origine de ${rb.name}" else "Revenir à la version précédente de ${rb.name}")) return@launch
                     runCatching { appContainer.repository.rollbackContainer(rb.name) }.onFailure {
                         haptics.reject()
                         snackbar.showSnackbar("Échec : ${it.message}")

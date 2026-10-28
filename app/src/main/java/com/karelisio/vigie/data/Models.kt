@@ -355,6 +355,12 @@ data class AgentSettings(
     val domains: List<String> = emptyList(),
     @SerialName("domain_days") val domainDays: Int = 30,
     @SerialName("debrid_down_alert") val debridDownAlert: Boolean = true,
+    /** Correction automatique des failles la nuit (agent 0.7.0). */
+    @SerialName("vuln_fix_auto") val vulnFixAuto: Boolean = false,
+    @SerialName("vuln_fix_all") val vulnFixAll: Boolean = false,
+    @SerialName("vuln_fix_list") val vulnFixList: List<String> = emptyList(),
+    /** Gravité minimale corrigée la nuit : critical, high, medium ou low (toutes). */
+    @SerialName("vuln_fix_level") val vulnFixLevel: String = "high",
 )
 
 /** Alerte quand une ligne de log d'un conteneur contient un texte (ou correspond à une regex). */
@@ -418,6 +424,8 @@ data class AgentJob(
     fun concerns(c: Container): Boolean = when (kind) {
         "stack" -> c.project == target
         "batch", "auto" -> c.updateAvailable || results.any { it.name == c.name }
+        // Correction des failles : une image peut servir à plusieurs conteneurs, tous recréés.
+        "vulnfix" -> target == c.name || results.any { it.name == c.name }
         else -> target == c.name
     }
 }

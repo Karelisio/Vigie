@@ -9,6 +9,8 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class RollbackPoint(
+    /** « » : mise à jour ; « vulnfix » : passage à une image corrigée par Vigie (agent 0.7.0), l'ancienne image est l'image d'origine. */
+    val kind: String = "",
     val container: String = "",
     @SerialName("image_ref") val imageRef: String = "",
     @SerialName("old_image_id") val oldImageId: String = "",
@@ -37,6 +39,9 @@ data class RollbackPoint(
     val ready get() = state == "ready"
     val rolledBack get() = state == "rolled_back"
 
+    /** Retour à l'image d'origine d'une image corrigée par Vigie. */
+    val vulnfix get() = kind == "vulnfix"
+
     /** Le retour peut aboutir : image sur le disque ou re-téléchargeable. */
     val reachable get() = imagePresent || downloadable
 }
@@ -58,6 +63,9 @@ suspend fun Repository.rollbackContainer(ref: String): AgentJob =
 suspend fun Repository.unignoreRollback(ref: String): RollbackPoint =
     api.request(server(), "DELETE", "/api/v1/containers/$ref/rollback/ignore", null, RollbackPoint.serializer())
 
-/** « Version précédente : 1.0, mise à jour le 28 oct. 2026 14:02 ». */
-fun RollbackPoint.summary(date: (Long) -> String): String =
+/** « Version précédente : 1.0, mise à jour le 28 oct. 2026 14:02 » ou, après une correction des failles, « Image d'origine : 1.0, corrigée le … ». */
+fun RollbackPoint.summary(date: (Long) -> String): String = if (vulnfix) {
+    "Image d'origine : $oldLabel, non corrigée" + if (updatedAt > 0) " (correction du ${date(updatedAt)})" else ""
+} else {
     "Version précédente : $oldLabel" + if (updatedAt > 0) ", mise à jour le ${date(updatedAt)}" else ""
+}

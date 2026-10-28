@@ -80,8 +80,13 @@ private fun summarize(c: List<TimelineEvent>): TimelineGroup {
             g("Réparé automatiquement (${autoHealReason(reason)})", "warning", if (reason == "down" && exit != null) "code $exit" else count)
         }
         // Mise à jour et retour à la version précédente par Vigie (agent 0.6.0) : « 1.0 → 2.0 ».
-        "rollback" in actions -> g("Revenu à la version précédente", "warning", c.first { it.action == "rollback" }.detail, "rollback")
+        "rollback" in actions -> c.first { it.action == "rollback" }.detail.let { d ->
+            // Retour après une correction des failles (agent 0.7) : « 1.4.2 corrigée → 1.4.2 ».
+            g(if (d.contains(" corrigée →")) "Revenu à l'image d'origine" else "Revenu à la version précédente", "warning", d, "rollback")
+        }
         "update" in actions -> g("Mis à jour depuis Vigie", "ok", c.first { it.action == "update" }.detail, "update")
+        // Correction des failles par Vigie (agent 0.7) : paquets mis à niveau dans une image dérivée.
+        "vulnfix" in actions -> g("Failles corrigées par Vigie", "ok", c.first { it.action == "vulnfix" }.detail, "vulnfix")
         "oom" in actions -> g("Tué : mémoire saturée", "critical")
         "health" in actions -> when (c.first().detail) {
             "healthy" -> g("Healthcheck OK", "ok")
@@ -132,9 +137,9 @@ fun TimelineCard(events: List<TimelineEvent>?, modifier: Modifier = Modifier, on
             )
             else -> {
                 val shown = if (all) groups else groups.take(6)
-                // Le retour concerne la mise à jour la plus récente, si rien ne l'a suivie depuis.
-                val latestUpdate = groups.indexOfFirst { it.kind == "update" || it.kind == "rollback" }
-                    .takeIf { it >= 0 && groups[it].kind == "update" }
+                // Le retour concerne la mise à jour (ou la correction) la plus récente, si rien ne l'a suivie depuis.
+                val latestUpdate = groups.indexOfFirst { it.kind == "update" || it.kind == "vulnfix" || it.kind == "rollback" }
+                    .takeIf { it >= 0 && groups[it].kind != "rollback" }
                 shown.forEachIndexed { i, g ->
                     TimelineRow(g, last = i == shown.lastIndex, onRollback = onRollback.takeIf { i == latestUpdate })
                 }
@@ -172,7 +177,7 @@ private fun TimelineRow(g: TimelineGroup, last: Boolean, onRollback: (() -> Unit
                 TextButton(onClick = onRollback, contentPadding = PaddingValues(horizontal = 0.dp)) {
                     Icon(Icons.AutoMirrored.Rounded.Undo, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Revenir à la version précédente")
+                    Text(if (g.kind == "vulnfix") "Revenir à l'image d'origine" else "Revenir à la version précédente")
                 }
             }
         }

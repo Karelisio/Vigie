@@ -882,10 +882,12 @@ func (m *Monitor) repoDigests(ctx context.Context, imageID string) ([]string, er
 	if ok {
 		return d, nil
 	}
-	d, err := m.dk.ImageInspect(ctx, imageID)
+	img, err := m.dk.ImageDetails(ctx, imageID)
 	if err != nil {
 		return nil, err
 	}
+	// Image corrigée par Vigie : pas de digest de registre, ceux de son image d'origine comptent.
+	d = images.EffectiveDigests(img.RepoDigests, images.LabelsOf(img.Config))
 	m.mu.Lock()
 	m.digests[imageID] = d
 	m.mu.Unlock()

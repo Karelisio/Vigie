@@ -149,7 +149,7 @@ func stanzas(r io.Reader, fn func(fields map[string]string)) error {
 			continue
 		}
 		switch k {
-		case "Package", "Status", "Version", "Source":
+		case "Package", "Status", "Version", "Source", "Architecture":
 			fields[k] = strings.TrimSpace(v)
 		}
 	}
@@ -157,9 +157,19 @@ func stanzas(r io.Reader, fn func(fields map[string]string)) error {
 	return sc.Err()
 }
 
+// Binary est un paquet installé tel que le gestionnaire de paquets le connaît (nom binaire), avec
+// le paquet source (Debian, Ubuntu) ou d'origine (Alpine) sous lequel OSV le référence.
+type Binary struct {
+	Name    string
+	Source  string
+	Version string
+	Arch    string
+}
+
 // dpkgPackages lit un fichier status de dpkg (ou un fichier de status.d) : paquets installés,
 // indexés par paquet source comme dans OSV. Le champ Source peut préciser la version source.
-func dpkgPackages(r io.Reader, eco string, add func(Package)) (int, error) {
+// bin (facultatif) reçoit chaque paquet binaire installé.
+func dpkgPackages(r io.Reader, eco string, add func(Package), bin func(Binary)) (int, error) {
 	n := 0
 	err := stanzas(r, func(f map[string]string) {
 		if f["Package"] == "" || f["Version"] == "" {
@@ -180,16 +190,20 @@ func dpkgPackages(r io.Reader, eco string, add func(Package)) (int, error) {
 			}
 		}
 		add(Package{Ecosystem: eco, Name: name, Version: version})
+		if bin != nil {
+			bin(Binary{Name: f["Package"], Source: name, Version: f["Version"], Arch: f["Architecture"]})
+		}
 	})
 	return n, err
 }
 
-// apkPackages lit /lib/apk/db/installed : P (nom), V (version), o (paquet d'origine, indexé par OSV).
-func apkPackages(r io.Reader, eco string, add func(Package)) (int, error) {
+// apkPackages lit /lib/apk/db/installed : P (nom), V (version), o (paquet d'origine, indexé par OSV),
+// A (architecture). bin (facultatif) reçoit chaque paquet installé.
+func apkPackages(r io.Reader, eco string, add func(Package), bin func(Binary)) (int, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	n := 0
-	var name, version, origin string
+	var name, version, origin, arch string
 	flush := func() {
 		if name != "" && version != "" {
 			n++
@@ -197,8 +211,11 @@ func apkPackages(r io.Reader, eco string, add func(Package)) (int, error) {
 				origin = name
 			}
 			add(Package{Ecosystem: eco, Name: origin, Version: version})
+			if bin != nil {
+				bin(Binary{Name: name, Source: origin, Version: version, Arch: arch})
+			}
 		}
-		name, version, origin = "", "", ""
+		name, version, origin, arch = "", "", "", ""
 	}
 	for sc.Scan() {
 		line := sc.Text()
@@ -216,6 +233,8 @@ func apkPackages(r io.Reader, eco string, add func(Package)) (int, error) {
 			version = line[2:]
 		case 'o':
 			origin = line[2:]
+		case 'A':
+			arch = line[2:]
 		}
 	}
 	flush()
@@ -455,6 +474,49 @@ func (fr fileReader) readOnce(ctx context.Context, p string, max int64, fn func(
 	return "", fn(io.LimitReader(tr, max))
 }
 
+// exists indique si p est un fichier ordinaire du conteneur, liens symboliques suivis (seul l'en-tête
+// de l'archive est lu).
+func (fr fileReader) exists(ctx context.Context, p string) (bool, error) {
+	for range maxSymlinkHops {
+		link, regular, err := fr.stat(ctx, p)
+		if errors.Is(err, errNotExist) {
+			return false, nil
+		}
+		if err != nil || link == "" {
+			return regular, err
+		}
+		if !path.IsAbs(link) {
+			link = path.Join(path.Dir(p), link)
+		}
+		p = path.Clean(link)
+	}
+	return false, fmt.Errorf("%s : trop de liens symboliques", p)
+}
+
+func (fr fileReader) stat(ctx context.Context, p string) (link string, regular bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, archiveTimeout)
+	defer cancel()
+	body, err := fr.dk.Archive(ctx, fr.id, p)
+	if err != nil {
+		if isNotFound(err) {
+			return "", false, errNotExist
+		}
+		return "", false, err
+	}
+	defer body.Close()
+	hdr, err := tar.NewReader(body).Next()
+	if err != nil {
+		return "", false, fmt.Errorf("%s : archive illisible : %w", p, err)
+	}
+	switch hdr.Typeflag {
+	case tar.TypeSymlink:
+		return hdr.Linkname, false, nil
+	case tar.TypeReg:
+		return "", true, nil
+	}
+	return "", false, nil
+}
+
 // readDir lit les fichiers ordinaires d'un dossier (status.d), dans l'ordre de l'archive.
 func (fr fileReader) readDir(ctx context.Context, p string, fn func(name string, r io.Reader) error) error {
 	ctx, cancel := context.WithTimeout(ctx, archiveTimeout)
@@ -502,13 +564,45 @@ type Inventory struct {
 	Error     string      `json:"err,omitempty"`
 	ReadAt    int64       `json:"at"`
 	Truncated bool        `json:"trunc,omitempty"`
+	// Paquets du gestionnaire de paquets (dpkg ou apk, pas status.d) : nom binaire, source ou origine,
+	// version, architecture. Sert à la correction des failles (agent 0.7.0).
+	Bins [][4]string `json:"bins,omitempty"`
+	// Outils présents dans l'image : sh, apt-get, apk.
+	Tools []string `json:"tools,omitempty"`
 }
 
-const inventoryVersion = 1
+// inventoryVersion 2 : paquets binaires et outils (agent 0.7.0) ; les inventaires plus anciens sont relus.
+const inventoryVersion = 2
+
+// HasTool indique si l'outil (sh, apt-get, apk) est présent dans l'image.
+func (inv Inventory) HasTool(name string) bool {
+	for _, t := range inv.Tools {
+		if t == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Binaries renvoie les paquets binaires installés.
+func (inv Inventory) Binaries() []Binary {
+	out := make([]Binary, 0, len(inv.Bins))
+	for _, b := range inv.Bins {
+		out = append(out, Binary{Name: b[0], Source: b[1], Version: b[2], Arch: b[3]})
+	}
+	return out
+}
 
 type inventoryBuilder struct {
 	inv  *Inventory
 	seen map[[3]string]bool
+}
+
+func (b *inventoryBuilder) bin(x Binary) {
+	if x.Name == "" || len(b.inv.Bins) >= maxPackages {
+		return
+	}
+	b.inv.Bins = append(b.inv.Bins, [4]string{x.Name, x.Source, x.Version, x.Arch})
 }
 
 func (b *inventoryBuilder) add(p Package) {
@@ -552,10 +646,20 @@ func readInventory(ctx context.Context, dk Archiver, id string, workDirs []strin
 	inv.Eco = osEcosystem(osInfo)
 
 	if eco := inv.Eco; eco != "" {
+		// Outils nécessaires à la correction des paquets : un shell et le gestionnaire de paquets
+		// (absents des images distroless).
+		tool := func(name, p string) {
+			ok, err := fr.exists(ctx, p)
+			note(err)
+			if ok {
+				inv.Tools = append(inv.Tools, name)
+			}
+		}
+		tool("sh", "/bin/sh")
 		switch ecoBase(eco) {
 		case "Debian", "Ubuntu":
 			note(fr.read(ctx, "/var/lib/dpkg/status", maxDpkgStatus, func(r io.Reader) error {
-				n, err := dpkgPackages(r, eco, b.add)
+				n, err := dpkgPackages(r, eco, b.add, b.bin)
 				inv.Count += n
 				return err
 			}))
@@ -563,16 +667,18 @@ func readInventory(ctx context.Context, dk Archiver, id string, workDirs []strin
 				if strings.HasSuffix(name, ".md5sums") {
 					return nil
 				}
-				n, err := dpkgPackages(r, eco, b.add)
+				n, err := dpkgPackages(r, eco, b.add, nil)
 				inv.Count += n
 				return err
 			}))
+			tool("apt-get", "/usr/bin/apt-get")
 		case "Alpine":
 			note(fr.read(ctx, "/lib/apk/db/installed", maxApkDB, func(r io.Reader) error {
-				n, err := apkPackages(r, eco, b.add)
+				n, err := apkPackages(r, eco, b.add, b.bin)
 				inv.Count += n
 				return err
 			}))
+			tool("apk", "/sbin/apk")
 		}
 	}
 
@@ -615,6 +721,14 @@ func readInventory(ctx context.Context, dk Archiver, id string, workDirs []strin
 		}
 		return a[2] < c[2]
 	})
+	sort.Slice(inv.Bins, func(i, j int) bool {
+		return inv.Bins[i][0]+"\x00"+inv.Bins[i][3] < inv.Bins[j][0]+"\x00"+inv.Bins[j][3]
+	})
 	inv.Error = strings.Join(errs, " ; ")
 	return inv
+}
+
+// ReadInventory lit l'inventaire de l'image d'un conteneur (aussi arrêté ou seulement créé).
+func ReadInventory(ctx context.Context, dk Archiver, containerID string, workDirs []string, now time.Time) Inventory {
+	return readInventory(ctx, dk, containerID, workDirs, now)
 }

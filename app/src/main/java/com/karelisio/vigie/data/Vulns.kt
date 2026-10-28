@@ -122,6 +122,12 @@ data class VulnImage(
     val vulns: List<Vuln> = emptyList(),
     /** Failles non listées par l'agent (au-delà des 200 plus graves). */
     val more: Int = 0,
+    /** Paquets qui ont une version corrigée, toutes failles comprises (agent 0.7.0). */
+    val fixes: List<VulnFix> = emptyList(),
+    /** Image corrigée par Vigie (agent 0.7.0), null sinon. */
+    val patched: PatchedImage? = null,
+    /** Dépôt source de l'image (label org.opencontainers.image.source), pour signaler une faille. */
+    val source: String = "",
 ) {
     /** Nom affiché : le premier conteneur, et le nombre des autres. */
     val title: String get() = when (containers.size) {
@@ -200,3 +206,194 @@ suspend fun Repository.vulns(): VulnReport = active().let { keep(it, api.get(it,
 
 /** Lance une analyse (202) ; l'agent renvoie l'état, analyse en cours comprise. 409 si elle est désactivée. */
 suspend fun Repository.scanVulns(): VulnReport = active().let { keep(it, api.postEmpty(it, "/api/v1/vulns/scan")) }
+
+// ---- Correction des failles (agent 0.7.0) ----
+
+/** Paquet vulnérable dont une version corrigée est publiée. */
+@Serializable
+data class VulnFix(
+    val ecosystem: String = "",
+    @SerialName("package") val pkg: String = "",
+    val version: String = "",
+    val fixed: String = "",
+    val counts: VulnCounts = VulnCounts(),
+)
+
+@Serializable
+data class PackageChange(val name: String = "", val from: String = "", val to: String = "")
+
+/** Image corrigée par Vigie : paquets mis à niveau dans une image dérivée de l'image d'origine. */
+@Serializable
+data class PatchedImage(
+    /** Date de la correction (ms). */
+    val at: Long = 0,
+    @SerialName("base_image") val baseImage: String = "",
+    @SerialName("base_digests") val baseDigests: List<String> = emptyList(),
+    val ref: String = "",
+    val packages: List<PackageChange> = emptyList(),
+)
+
+/** Analyse d'une nouvelle version, téléchargée sans être installée. */
+@Serializable
+data class FixCandidate(
+    val current: String = "",
+    @SerialName("image_id") val imageId: String = "",
+    val version: String = "",
+    @SerialName("analyzed_at") val analyzedAt: Long = 0,
+    /** Failles actuelles absentes de la nouvelle version. */
+    val fixed: VulnCounts = VulnCounts(),
+    /** Failles nouvelles. */
+    val added: VulnCounts = VulnCounts(),
+    val remaining: VulnCounts = VulnCounts(),
+)
+
+@Serializable
+data class UpdateRoute(val available: Boolean = false, val candidate: FixCandidate? = null)
+
+@Serializable
+data class PackagePlan(
+    /** Paquet source (Debian, Ubuntu) ou d'origine (Alpine). */
+    val name: String = "",
+    val version: String = "",
+    val fixed: String = "",
+    /** Paquets installés mis à niveau. */
+    val binaries: List<String> = emptyList(),
+    val counts: VulnCounts = VulnCounts(),
+)
+
+@Serializable
+data class PatchRoute(
+    val possible: Boolean = false,
+    /** apt ou apk. */
+    val manager: String = "",
+    val packages: List<PackagePlan> = emptyList(),
+    /** Failles corrigées attendues. */
+    val fixes: VulnCounts = VulnCounts(),
+    /** Pourquoi Vigie ne peut pas corriger cette image. */
+    val reason: String = "",
+)
+
+/** Failles des dépendances de l'application (npm), que seule une nouvelle image corrige. */
+@Serializable
+data class AppVulns(val ecosystem: String = "", val counts: VulnCounts = VulnCounts(), val fixable: Int = 0)
+
+/** Bilan de la dernière correction d'une image. */
+@Serializable
+data class FixOutcome(
+    val at: Long = 0,
+    val route: String = "",
+    val from: String = "",
+    val image: String = "",
+    val packages: Int = 0,
+    val fixed: VulnCounts = VulnCounts(),
+    val added: VulnCounts = VulnCounts(),
+    val remaining: VulnCounts = VulnCounts(),
+    val message: String = "",
+)
+
+/** Correction proposée pour une image : la voie (update, patch, none) et son explication. */
+@Serializable
+data class FixPlan(
+    @SerialName("image_id") val imageId: String = "",
+    val ref: String = "",
+    val containers: List<VulnContainer> = emptyList(),
+    val os: String = "",
+    val counts: VulnCounts = VulnCounts(),
+    val route: String = "none",
+    val title: String = "",
+    val explain: String = "",
+    val update: UpdateRoute = UpdateRoute(),
+    val patch: PatchRoute = PatchRoute(),
+    val app: AppVulns = AppVulns(),
+    /** Failles sans version corrigée connue. */
+    val unfixed: Int = 0,
+    val patched: PatchedImage? = null,
+    val last: FixOutcome? = null,
+    val source: String = "",
+    /** Retour à l'image d'origine après une correction : la nuit ne la refait pas. */
+    val declined: Boolean = false,
+    /** Image de l'agent Vigie. */
+    val self: Boolean = false,
+) {
+    val canFix: Boolean get() = route == "update" || route == "patch"
+
+    /** Conteneur qui nomme l'opération. */
+    val target: String get() = containers.firstOrNull()?.name.orEmpty()
+
+    /** Nouvelle version publiée mais pas encore analysée. */
+    val needsAnalysis: Boolean get() = route == "update" && update.available && update.candidate == null
+
+    /** Lien pour signaler les failles de l'application au projet (GitHub : page des tickets). */
+    val reportUrl: String get() = when {
+        source.isEmpty() -> ""
+        source.startsWith("https://github.com/") -> source.removeSuffix("/").removeSuffix(".git") + "/issues"
+        else -> source
+    }
+}
+
+@Serializable
+data class PlanTotals(
+    val patch: Int = 0,
+    val update: Int = 0,
+    val none: Int = 0,
+    /** Images corrigeables. */
+    val fixable: Int = 0,
+    val fixes: VulnCounts = VulnCounts(),
+)
+
+/** Correction automatique de nuit. */
+@Serializable
+data class NightlyFix(
+    val enabled: Boolean = false,
+    val level: String = "high",
+    val all: Boolean = false,
+    /** Prochaine analyse de nuit, suivie de la correction (ms, 0 si désactivée). */
+    val next: Long = 0,
+    @SerialName("last_run") val lastRun: Long = 0,
+    val message: String = "",
+)
+
+/** GET /api/v1/vulns/fixes (agent 0.7.0). */
+@Serializable
+data class FixPlans(
+    /** Mises à jour autorisées sur l'agent (sinon aucune correction possible). */
+    val enabled: Boolean = true,
+    val busy: Boolean = false,
+    val scanning: Boolean = false,
+    @SerialName("last_scan") val lastScan: Long = 0,
+    val totals: PlanTotals = PlanTotals(),
+    val images: List<FixPlan> = emptyList(),
+    val nightly: NightlyFix = NightlyFix(),
+) {
+    fun plan(imageId: String): FixPlan? = images.firstOrNull { it.imageId == imageId }
+}
+
+@Serializable
+data class FixRequest(
+    @SerialName("image_id") val imageId: String = "",
+    val container: String = "",
+    val route: String = "",
+)
+
+/** Gravité minimale corrigée la nuit. */
+val FixLevels = listOf("critical" to "Critiques", "high" to "+ élevées", "medium" to "+ moyennes", "low" to "Toutes")
+
+/** « Corrigée par Vigie le 28 oct. 2026 : 2 paquets mis à niveau ». */
+fun PatchedImage.summary(date: (Long) -> String): String = buildString {
+    append("Corrigée par Vigie")
+    if (at > 0) append(" le ${date(at)}")
+    if (packages.isNotEmpty()) append(" : " + if (packages.size == 1) "1 paquet mis à niveau" else "${packages.size} paquets mis à niveau")
+}
+
+suspend fun Repository.vulnFixes(): FixPlans = api.get(active(), "/api/v1/vulns/fixes")
+
+/** Corrige une image par la voie proposée (ou [route]) : opération « vulnfix » suivie comme une mise à jour. */
+suspend fun Repository.fixVulns(container: String, route: String = ""): AgentJob =
+    trackJob(api.post(active(), "/api/v1/vulns/fix", FixRequest(container = container, route = route)))
+
+/** Corrige l'une après l'autre toutes les images qui peuvent l'être. */
+suspend fun Repository.fixAllVulns(): AgentJob = trackJob(api.postEmpty(active(), "/api/v1/vulns/fix-all"))
+
+/** Télécharge la nouvelle version d'une image sans l'installer et la compare à l'image en service. */
+suspend fun Repository.analyzeNewVersion(container: String): AgentJob =
+    trackJob(api.post(active(), "/api/v1/vulns/analyze", FixRequest(container = container)))

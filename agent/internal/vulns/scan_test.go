@@ -235,8 +235,9 @@ func TestScanUsesCaches(t *testing.T) {
 	)
 	before := e.dk.archiveCalls()
 	r := e.scanNow(t)
-	// os-release (lien puis cible), dpkg status, status.d, puis les deux package-lock de /app (absents).
-	if got := e.dk.archiveCalls() - before; got != 6 {
+	// os-release (lien puis cible), /bin/sh, dpkg status, status.d, apt-get, puis les deux package-lock
+	// de /app (absents).
+	if got := e.dk.archiveCalls() - before; got != 8 {
 		t.Fatalf("%d archives lues pour la nouvelle image", got)
 	}
 	if len(r.Images) != 2 || findImage(t, r, imgNew).Containers[0].Name != "comet" {

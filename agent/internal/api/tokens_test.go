@@ -40,6 +40,11 @@ func TestReadOnlyAllowed(t *testing.T) {
 		{"GET", "/api/v1/storage", true},
 		{"GET", "/api/v1/domains", true},
 		{"POST", "/api/v1/containers/abc/rollback", false},
+		// Correction des failles (agent 0.7.0) : ni consultation ni action en lecture seule.
+		{"GET", "/api/v1/vulns/fixes", false},
+		{"POST", "/api/v1/vulns/fix", false},
+		{"POST", "/api/v1/vulns/fix-all", false},
+		{"POST", "/api/v1/vulns/analyze", false},
 	} {
 		if got := readOnlyAllowed(httptest.NewRequest(c.method, c.path, nil)); got != c.ok {
 			t.Errorf("%s %s : %v, attendu %v", c.method, c.path, got, c.ok)

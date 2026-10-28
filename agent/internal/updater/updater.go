@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/karelisio/vigie/agent/internal/docker"
+	"github.com/karelisio/vigie/agent/internal/images"
 	"github.com/karelisio/vigie/agent/internal/store"
 )
 
@@ -127,8 +128,11 @@ func (m *Manager) Jobs() []Job {
 
 func (m *Manager) start(kind, action, target string, run func(ctx context.Context, j *Job) error) (Job, error) {
 	// Redémarrer, démarrer ou arrêter une stack reste possible même sans les mises à jour d'images.
-	if (action == "update" || action == "pull" || action == "cleanup" || action == "rollback") && !m.opt.Enabled {
-		return Job{}, ErrDisabled
+	switch action {
+	case "update", "pull", "cleanup", "rollback", "vulnfix", "analyze":
+		if !m.opt.Enabled {
+			return Job{}, ErrDisabled
+		}
 	}
 	m.mu.Lock()
 	if m.current != nil {
@@ -508,12 +512,17 @@ func (m *Manager) pullOne(ctx context.Context, j *Job, c Member, base, span floa
 	if err != nil {
 		return Result{Name: c.Name, Message: err.Error()}, err
 	}
+	oldImg, _ := m.dk.ImageDetails(ctx, in.Image)
 	id, err := m.pull(ctx, j, in, base, span)
 	if err != nil {
 		return Result{Name: c.Name, Message: err.Error()}, err
 	}
 	if id == in.Image {
 		return Result{Name: c.Name, OK: true, Message: c.Name + " : image déjà à jour"}, nil
+	}
+	newImg, _ := m.dk.ImageDetails(ctx, id)
+	if m.keepPatched(ctx, c.Name, str(in.Config, "Image"), in.Image, oldImg, id, newImg) {
+		return Result{Name: c.Name, OK: true, Message: c.Name + " : image déjà à jour (corrigée par Vigie)"}, nil
 	}
 	return Result{Name: c.Name, OK: true, Updated: true,
 		Message: c.Name + " : nouvelle image téléchargée, appliquée à la prochaine mise à jour"}, nil
@@ -539,6 +548,9 @@ func (m *Manager) updateOne(ctx context.Context, j *Job, c Member, base, span fl
 	}
 	ref := str(in.Config, "Image")
 	newImg, _ := m.dk.ImageDetails(ctx, newImage)
+	if m.keepPatched(ctx, c.Name, ref, in.Image, oldImg, newImage, newImg) {
+		return Result{Name: c.Name, OK: true, Message: c.Name + " : déjà à jour (image corrigée par Vigie)"}, nil
+	}
 	prev := m.points.get(c.Name)
 	if !explicit && prev.ignores(newImage, newImg) {
 		// La référence revient à l'image en service, comme si rien n'avait été téléchargé.
@@ -565,6 +577,26 @@ func (m *Manager) updateOne(ctx context.Context, j *Job, c Member, base, span fl
 		}
 	}
 	return Result{Name: c.Name, OK: true, Updated: true, Message: c.Name + " mis à jour"}, nil
+}
+
+// keepPatched : le conteneur utilise une image corrigée par Vigie et le téléchargement a ramené son
+// image d'origine (aucune nouvelle version publiée). La référence revient à l'image corrigée : la
+// remplacer par l'origine annulerait la correction, que la nuit suivante referait (boucle).
+func (m *Manager) keepPatched(ctx context.Context, name, ref, current string, cur *docker.ImageDetails, pulled string, pulledImg *docker.ImageDetails) bool {
+	if cur == nil {
+		return false
+	}
+	var digests []string
+	if pulledImg != nil {
+		digests = pulledImg.RepoDigests
+	}
+	if !images.PatchedFrom(images.LabelsOf(cur.Config)).IsBase(ref, pulled, digests) {
+		return false
+	}
+	if err := m.dk.Tag(ctx, current, ref); err != nil {
+		m.log.Warn("référence non rétablie sur l'image corrigée", "conteneur", name, "erreur", err)
+	}
+	return true
 }
 
 func (m *Manager) prune(ctx context.Context, imageID string) {
@@ -936,6 +968,9 @@ func (j Job) Title() string {
 		}
 		return "Échec du nettoyage"
 	case "rollback":
+		if j.OK && len(j.Results) == 1 && strings.Contains(j.Results[0].Message, "image d'origine") {
+			return j.Target + " est revenu à son image d'origine" // correction des failles écartée
+		}
 		if j.OK {
 			return j.Target + " est revenu à sa version précédente"
 		}
@@ -954,6 +989,8 @@ func (j Job) Title() string {
 			return "Mises à jour de la nuit : échec" // interrompues avant la fin
 		}
 		return "Mises à jour de la nuit : " + summary
+	case "vulnfix":
+		return j.vulnfixTitle()
 	}
 	if !j.OK {
 		return "Échec de la mise à jour de " + j.Target
@@ -967,6 +1004,9 @@ func (j Job) Title() string {
 // Body détaille l'opération pour une notification : pour les mises à jour de la nuit, la liste des
 // conteneurs mis à jour et de ceux en échec.
 func (j Job) Body() string {
+	if j.Kind == "vulnfix" && (j.Target == "nightly" || j.Target == "all") {
+		return j.vulnfixBody()
+	}
 	if j.Kind != "auto" {
 		return j.Message
 	}
