@@ -206,7 +206,7 @@ class ScreenshotTest {
         )
         Column(Modifier.padding(8.dp)) {
             sample.forEachIndexed { i, t ->
-                LogRow(UiLine(i.toLong(), now - (7 - i) * 1000L, if (i == 6) "stderr" else "stdout", t, levelOf(t)), query = if (i == 4) "manifest" else "", animate = false, modifier = Modifier, onCopy = {})
+                LogRow(UiLine(i.toLong(), now - (7 - i) * 1000L, if (i == 6) "stderr" else "stdout", t, levelOf(t)), query = if (i == 4) "manifest" else "", animate = false, selected = false, modifier = Modifier, onClick = {}, onLongClick = {})
             }
         }
     }
@@ -257,7 +257,7 @@ class ScreenshotTest {
                 c = containers[1].copy(imageRef = "g0ldyy/comet:latest"), enabled = true, busy = true, job = job.copy(kind = "update", target = "comet"),
                 onUpdate = {}, onPull = {}, onStack = {},
             )
-            com.karelisio.vigie.ui.containers.StackHeader("stremio", containers.take(5), updatesEnabled = true, actions = true, busy = false, onAction = {})
+            com.karelisio.vigie.ui.containers.StackHeader("stremio", containers.take(5), updatesEnabled = true, actions = true, busy = false, onAction = {}, onLogs = {})
             ContainerCard(containers[1], busy = false, onOpen = {})
             com.karelisio.vigie.ui.components.JobBanner(job)
             com.karelisio.vigie.ui.components.SectionCard(title = "Résultat") { com.karelisio.vigie.ui.components.JobProgress(done) }

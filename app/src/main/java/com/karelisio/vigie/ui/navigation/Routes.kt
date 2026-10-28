@@ -18,6 +18,7 @@ import kotlinx.serialization.Serializable
 @Serializable data object SettingsRoute
 @Serializable data class ContainerRoute(val id: String, val name: String)
 @Serializable data class LogsRoute(val id: String, val name: String)
+@Serializable data class StackLogsRoute(val project: String)
 @Serializable data class ServerEditRoute(val id: String? = null, val link: String? = null)
 @Serializable data object ScanRoute
 @Serializable data object PermissionsRoute

@@ -66,9 +66,11 @@ class VigieWidget : GlanceAppWidget() {
         val server = c.servers.active
         val state = server?.let { c.cache.read(it.id) }
         val favorites = server?.let { c.prefs.current().favorites[it.id] }.orEmpty()
+        // Panne constatée par la surveillance depuis le téléphone, après les dernières données reçues.
+        val unreachable = server != null && c.watch.outageSince(server.id, state?.updatedAt ?: 0) != null
         provideContent {
             GlanceTheme {
-                WidgetContent(serverName = server?.name, state = state, favorites = favorites)
+                WidgetContent(serverName = server?.name, state = state, favorites = favorites, unreachable = unreachable)
             }
         }
     }
@@ -82,15 +84,16 @@ class VigieWidget : GlanceAppWidget() {
 }
 
 @Composable
-private fun WidgetContent(serverName: String?, state: CachedState?, favorites: Set<String>) {
+private fun WidgetContent(serverName: String?, state: CachedState?, favorites: Set<String>, unreachable: Boolean) {
     val size = LocalSize.current
     val ov = state?.overview
     val sys = ov?.system ?: state?.system
     val now = System.currentTimeMillis()
     val stale = state == null || now - state.updatedAt > 20 * 60_000
-    val status = if (state == null) null else ov?.status
+    val status = if (unreachable) "critical" else if (state == null) null else ov?.status
     val headline = when {
         serverName == null -> "Ajoute un serveur"
+        unreachable -> "Injoignable"
         state == null -> "En attente…"
         status == "ok" -> "Tout va bien"
         status == "warning" -> "À surveiller"

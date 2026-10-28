@@ -20,6 +20,7 @@ object Notifications {
     const val CHANNEL_CRITICAL = "alerts_critical"
     const val CHANNEL_RESOLVED = "alerts_resolved"
     const val CHANNEL_UPDATES = "updates"
+    const val CHANNEL_UNREACHABLE = "server_unreachable"
     private const val GROUP = "vigie_alerts"
 
     const val EXTRA_CONTAINER = "container_id"
@@ -48,6 +49,11 @@ object Notifications {
                 },
                 NotificationChannel(CHANNEL_UPDATES, "Mises à jour de l'appli", NotificationManager.IMPORTANCE_LOW).apply {
                     description = "Téléchargement des nouvelles versions"
+                },
+                NotificationChannel(CHANNEL_UNREACHABLE, "Serveur injoignable", NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "Quand ton téléphone n'arrive plus à joindre un serveur (l'agent ne peut alors plus prévenir)"
+                    group = GROUP
+                    enableVibration(true)
                 },
             ),
         )

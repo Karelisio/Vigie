@@ -34,6 +34,7 @@ class AppContainer(app: Application) {
     val push = Push(app, repository, prefs, scope)
     val updater = Updater(app, api.http, prefs)
     val lock = com.karelisio.vigie.security.AppLock()
+    val watch = com.karelisio.vigie.watch.ServerWatch(app)
 }
 
 class VigieApp : Application() {
@@ -57,6 +58,7 @@ class VigieApp : Application() {
             }
         })
         container.surfaces.schedulePeriodic()
+        container.watch.schedule()
         container.scope.launch { container.push.syncToken() }
     }
 

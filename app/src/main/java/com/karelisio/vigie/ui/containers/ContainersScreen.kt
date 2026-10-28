@@ -400,6 +400,7 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
                                 haptics.tick()
                                 if (action in setOf("update", "stop", "restart")) confirmGroup = project to action else runGroup(project, action)
                             },
+                            onLogs = { nav.navigate(com.karelisio.vigie.ui.navigation.StackLogsRoute(project)) },
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp).animateItem(),
                         )
                     }

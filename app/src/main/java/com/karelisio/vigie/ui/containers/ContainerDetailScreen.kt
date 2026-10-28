@@ -250,6 +250,12 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
                 Text("Logs en direct")
             }
         }
+        if (c.project.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            com.karelisio.vigie.ui.logs.StackLogsButton(c.project, Modifier.padding(horizontal = 16.dp).cascade(0)) {
+                nav.navigate(com.karelisio.vigie.ui.navigation.StackLogsRoute(c.project))
+            }
+        }
         Spacer(Modifier.height(12.dp))
         if (c.running) StatsCard(c, Modifier.padding(horizontal = 16.dp).cascade(1))
         Spacer(Modifier.height(12.dp))

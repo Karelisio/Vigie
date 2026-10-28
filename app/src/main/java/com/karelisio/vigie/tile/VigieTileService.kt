@@ -12,6 +12,7 @@ import com.karelisio.vigie.R
 import com.karelisio.vigie.appContainer
 import com.karelisio.vigie.data.CachedState
 import com.karelisio.vigie.data.Fmt
+import com.karelisio.vigie.watch.watchMoment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -49,9 +50,12 @@ class VigieTileService : TileService() {
         val tile = qsTile ?: return
         val ov = state?.overview
         val stale = state != null && System.currentTimeMillis() - state.updatedAt > 10 * 60_000
+        // Panne constatée par la surveillance depuis le téléphone, après les dernières données reçues.
+        val outage = appContainer.servers.active?.takeIf { !refreshing }?.let { appContainer.watch.outageSince(it.id, state?.updatedAt ?: 0) }
         tile.label = name ?: "Vigie"
         val subtitle = when {
             name == null -> "Aucun serveur"
+            outage != null -> "Injoignable depuis ${watchMoment(outage, System.currentTimeMillis())}"
             ov == null -> if (refreshing) "Connexion…" else "Hors ligne"
             stale && !refreshing -> "Hors ligne · ${Fmt.ago(state.updatedAt)}"
             ov.status == "ok" -> "Tout va bien · CPU ${ov.system?.cpu?.toInt() ?: 0} %"
@@ -65,7 +69,7 @@ class VigieTileService : TileService() {
             ov.status == "ok" -> Tile.STATE_ACTIVE
             else -> Tile.STATE_INACTIVE
         }
-        tile.icon = Icon.createWithResource(this, if (ov == null || ov.status == "ok") R.drawable.ic_tile else R.drawable.ic_widget_alert)
+        tile.icon = Icon.createWithResource(this, if (outage == null && (ov == null || ov.status == "ok")) R.drawable.ic_tile else R.drawable.ic_widget_alert)
         tile.contentDescription = "Vigie : $subtitle"
         tile.updateTile()
     }

@@ -136,6 +136,7 @@ fun VigieNavHost(nav: NavHostController, start: Any, snackbar: SnackbarHostState
                         screen<SettingsRoute> { SettingsScreen(nav) }
                         screen<ContainerRoute> { ContainerDetailScreen(nav, it.toRoute<ContainerRoute>()) }
                         screen<LogsRoute> { LogsScreen(nav, it.toRoute<LogsRoute>()) }
+                        screen<StackLogsRoute> { com.karelisio.vigie.ui.logs.StackLogsScreen(nav, it.toRoute<StackLogsRoute>()) }
                         screen<ServerEditRoute> { ServerEditScreen(nav, it.toRoute<ServerEditRoute>(), it) }
                         screen<ScanRoute> { ScanScreen(nav) }
                         screen<PermissionsRoute> { PermissionsScreen(nav) }

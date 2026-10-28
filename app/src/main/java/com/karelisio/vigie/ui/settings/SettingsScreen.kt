@@ -222,6 +222,7 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
                 scope.launch { vm.setNotifications(on) }
             }
         }
+        item { ServerWatchRow(prefs.notifications) }
         item {
             Row_(Icons.Rounded.SendToMobile, "Envoyer une notification de test", "Vérifie toute la chaîne agent → Firebase → téléphone") {
                 scope.launch { snackbar.showSnackbar(vm.testPush()) }

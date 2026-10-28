@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.LayersClear
@@ -55,6 +56,7 @@ internal fun StackHeader(
     actions: Boolean,
     busy: Boolean,
     onAction: (String) -> Unit,
+    onLogs: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var menu by remember { mutableStateOf(false) }
@@ -78,28 +80,37 @@ internal fun StackHeader(
                     color = scheme.onSecondaryContainer.copy(alpha = 0.8f),
                 )
             }
-            if (project.isNotEmpty() && actions) {
+            if (project.isNotEmpty()) {
                 Box {
-                    IconButton(onClick = { haptics.tick(); menu = true }, enabled = !busy) {
+                    IconButton(onClick = { haptics.tick(); menu = true }) {
                         Icon(Icons.Rounded.MoreVert, "Actions de la stack", tint = scheme.onSecondaryContainer)
                     }
                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                        @Composable
-                        fun Item(action: String, icon: ImageVector) {
-                            DropdownMenuItem(
-                                text = { Text(StackActions.getValue(action)) },
-                                leadingIcon = { Icon(icon, null) },
-                                onClick = { menu = false; onAction(action) },
-                            )
-                        }
-                        if (updatesEnabled) {
-                            Item("update", Icons.Rounded.SystemUpdateAlt)
-                            Item("pull", Icons.Rounded.CloudDownload)
+                        DropdownMenuItem(
+                            text = { Text("Logs de la stack") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Notes, null) },
+                            onClick = { menu = false; onLogs() },
+                        )
+                        if (actions) {
                             HorizontalDivider()
+                            @Composable
+                            fun Item(action: String, icon: ImageVector) {
+                                DropdownMenuItem(
+                                    text = { Text(StackActions.getValue(action)) },
+                                    leadingIcon = { Icon(icon, null) },
+                                    onClick = { menu = false; onAction(action) },
+                                    enabled = !busy,
+                                )
+                            }
+                            if (updatesEnabled) {
+                                Item("update", Icons.Rounded.SystemUpdateAlt)
+                                Item("pull", Icons.Rounded.CloudDownload)
+                                HorizontalDivider()
+                            }
+                            Item("restart", Icons.Rounded.RestartAlt)
+                            if (running < members.size) Item("start", Icons.Rounded.PlayArrow)
+                            if (running > 0) Item("stop", Icons.Rounded.Stop)
                         }
-                        Item("restart", Icons.Rounded.RestartAlt)
-                        if (running < members.size) Item("start", Icons.Rounded.PlayArrow)
-                        if (running > 0) Item("stop", Icons.Rounded.Stop)
                     }
                 }
             }
