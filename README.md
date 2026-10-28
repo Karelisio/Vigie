@@ -117,7 +117,11 @@ keytool -genkeypair -v -keystore vigie.jks -alias vigie -keyalg RSA -keysize 409
 
 ## 7. Publier une version
 
-Crée un tag `vX.Y.Z` (GitHub › **Releases** › **Draft a new release** › *Choose a tag* › `v1.2.0` › **Publish**). GitHub Actions :
+Au choix :
+- GitHub › **Releases** › **Draft a new release** › *Choose a tag* › `v1.2.0` › **Publish** ;
+- ou GitHub › **Actions** › **Release** › **Run workflow** › version `1.2.0` (le tag est créé automatiquement).
+
+GitHub Actions :
 - construit l'image de l'agent `X.Y.Z` + `latest` ;
 - compile l'APK signé (`versionCode` = numéro d'exécution du workflow) ;
 - publie la release avec l'APK et le changelog (section `## [X.Y.Z]` de [`CHANGELOG.md`](CHANGELOG.md), sinon la liste des commits).

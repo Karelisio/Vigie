@@ -1,29 +1,101 @@
 name: Release
 
-# Une version = un tag vX.Y.Z : APK signé + GitHub Release avec changelog.
-# L'image de l'agent X.Y.Z / latest est publiée par le workflow « Agent » sur le même tag.
+# Une version = un tag vX.Y.Z → APK signé + GitHub Release (changelog) + image de l'agent X.Y.Z et latest.
+# Deux façons de publier :
+#   - créer une release / un tag vX.Y.Z sur GitHub ;
+#   - lancer ce workflow à la main (Actions › Release › Run workflow) avec la version : le tag est créé ici.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Tag existant à (re)publier, ex. v1.2.0"
+      version:
+        description: "Version à publier, ex. 0.2.0 (le tag vX.Y.Z est créé sur la branche choisie)"
         required: true
 
 permissions:
   contents: write
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  apk:
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then V="${INPUT_VERSION#v}"; else V="${GITHUB_REF_NAME#v}"; fi
+          if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::Version invalide : $V (attendu X.Y.Z)"; exit 1; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+      - name: Création du tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Le tag $TAG existe déjà."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Vigie ${TAG#v}"
+          git push origin "$TAG"
+
+  image:
+    needs: prepare
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Nom d'image en minuscules
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vigie-agent" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tags
+        id: tags
+        env:
+          V: ${{ needs.prepare.outputs.version }}
+        run: echo "list=$IMAGE:$V,$IMAGE:${V%.*},$IMAGE:latest" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: agent
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+          build-args: VERSION=${{ needs.prepare.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  apk:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION_NAME: ${{ needs.prepare.outputs.version }}
+      VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
 
       - uses: actions/setup-java@v5
@@ -49,11 +121,6 @@ jobs:
             echo "::warning::GOOGLE_SERVICES_JSON_BASE64 absent : l'APK n'aura pas les notifications push."
           fi
 
-      - name: Version
-        run: |
-          echo "VERSION_NAME=${TAG#v}" >> "$GITHUB_ENV"
-          echo "VERSION_CODE=${{ github.run_number }}" >> "$GITHUB_ENV"
-
       - name: Compilation de l'APK signé
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -63,7 +130,7 @@ jobs:
           ./gradlew --no-daemon :app:assembleRelease
           mkdir -p dist
           cp app/build/outputs/apk/release/app-release.apk "dist/vigie-$VERSION_NAME.apk"
-          # Vérifie que l'APK est bien signé avec le keystore fourni (et non la clé de debug).
+          # Vérifie que l'APK est signé avec le keystore fourni (et non la clé de debug).
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
           "$APKSIGNER" verify --print-certs "dist/vigie-$VERSION_NAME.apk" | tee cert.txt
           if grep -q "CN=Android Debug" cert.txt; then echo "::error::APK signé avec la clé de debug"; exit 1; fi
@@ -77,10 +144,9 @@ jobs:
             on && /^## \[/ {exit}
             on {print}
           ' CHANGELOG.md > notes.md || true
-          if [ ! -s notes.md ] || [ -z "$(tr -d '[:space:]' < notes.md)" ]; then
+          if [ -z "$(tr -d '[:space:]' < notes.md)" ]; then
             PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
-            RANGE=${PREV:+$PREV..}$TAG
-            git log --no-merges --pretty='- %s' $RANGE > notes.md
+            git log --no-merges --pretty='- %s' ${PREV:+$PREV..}$TAG > notes.md
           fi
           printf '\n\n---\nImage de l'"'"'agent : `ghcr.io/%s/vigie-agent:%s`\n' "${GITHUB_REPOSITORY_OWNER,,}" "$VERSION_NAME" >> notes.md
           cat notes.md
