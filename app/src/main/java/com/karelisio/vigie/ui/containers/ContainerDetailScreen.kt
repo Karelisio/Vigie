@@ -134,6 +134,14 @@ class ContainerDetailViewModel : ViewModel() {
         repo.mute(id, muted)
     }
 
+    suspend fun update(id: String, pullOnly: Boolean) {
+        repo.updateContainer(id, pullOnly)
+    }
+
+    suspend fun stack(project: String, action: String) {
+        repo.stackAction(project, action)
+    }
+
     fun toggleFavorite(name: String, done: (Boolean) -> Unit) {
         viewModelScope.launch {
             val server = appContainer.servers.active ?: return@launch
@@ -241,6 +249,29 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
         }
         Spacer(Modifier.height(12.dp))
         if (c.running) StatsCard(c, Modifier.padding(horizontal = 16.dp).cascade(1))
+        Spacer(Modifier.height(12.dp))
+        val guard = LocalActionGuard.current
+        val now = com.karelisio.vigie.ui.components.rememberNow(5_000)
+        val job = state.jobs.firstOrNull { it.concerns(c) && (!it.done || now - it.finishedAt < 10 * 60_000) }
+        fun runJob(label: String?, block: suspend () -> Unit) {
+            scope.launch {
+                if (label != null && !guard(label)) return@launch
+                runCatching { block() }.onFailure {
+                    haptics.reject()
+                    snackbar.showSnackbar("Échec : ${it.message}")
+                }
+            }
+        }
+        UpdateCard(
+            c = c,
+            enabled = state.updatesEnabled,
+            busy = state.runningJob != null,
+            job = job,
+            onUpdate = { runJob("Mettre à jour ${c.name}") { vm.update(id, false) } },
+            onPull = { runJob(null) { vm.update(id, true) } },
+            onStack = { runJob("Mettre à jour la stack ${c.project}") { vm.stack(c.project, "update") } },
+            modifier = Modifier.padding(horizontal = 16.dp).cascade(2),
+        )
         Spacer(Modifier.height(12.dp))
         Charts(history, vm::loadHistory, Modifier.padding(horizontal = 16.dp).cascade(2))
         Spacer(Modifier.height(12.dp))

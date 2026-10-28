@@ -26,7 +26,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.NewReleases
+import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Update
 import androidx.compose.material.icons.rounded.Inventory2
@@ -122,6 +124,11 @@ class ContainersViewModel : ViewModel() {
         }
     }
 
+    /** Lance une opération de l'agent ; renvoie l'erreur éventuelle (refus, autre opération en cours…). */
+    suspend fun stack(project: String, action: String): Result<Unit> = runCatching { repo.stackAction(project, action); Unit }
+
+    suspend fun updateAll(): Result<Unit> = runCatching { repo.updateAll(); Unit }
+
     fun toggleFavorite(name: String, done: (Boolean) -> Unit) {
         viewModelScope.launch {
             val id = appContainer.servers.active?.id ?: return@launch
@@ -168,6 +175,9 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf(ContainerFilter.All) }
     var confirmStop by remember { mutableStateOf<Container?>(null) }
+    var grouped by rememberSaveable { mutableStateOf(false) }
+    // Action de stack (ou « all » pour tout mettre à jour) en attente de confirmation.
+    var confirmGroup by remember { mutableStateOf<Pair<String, String>?>(null) }
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
@@ -223,6 +233,18 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
         }
     }
 
+    fun runGroup(project: String, action: String) {
+        scope.launch {
+            val label = if (project == "*") "Tout mettre à jour" else "${StackActions[action]} la stack $project"
+            if (action != "pull" && !guard(label)) return@launch
+            val r = if (project == "*") vm.updateAll() else vm.stack(project, action)
+            r.exceptionOrNull()?.let {
+                haptics.reject()
+                snackbar.showSnackbar("Échec : ${it.message}")
+            }
+        }
+    }
+
     fun checkImages() {
         haptics.tick()
         vm.checkImages { r ->
@@ -274,6 +296,15 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                    TooltipBox(
+                        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Below),
+                        tooltip = { PlainTooltip { Text(if (grouped) "Afficher en liste" else "Grouper par stack") } },
+                        state = rememberTooltipState(),
+                    ) {
+                        androidx.compose.material3.IconToggleButton(checked = grouped, onCheckedChange = { haptics.toggle(it); grouped = it }) {
+                            Icon(Icons.Rounded.Layers, if (grouped) "Afficher en liste" else "Grouper par stack")
+                        }
                     }
                     TooltipBox(
                         positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Below),
@@ -337,12 +368,83 @@ fun ContainersScreen(nav: NavHostController, vm: ContainersViewModel = viewModel
                     )
                 }
             }
-            val sections = pinned.isNotEmpty() && others.isNotEmpty()
-            if (sections) item(key = "h-pinned") { SectionTitle("Épinglés", Modifier.animateItem().padding(horizontal = 20.dp)) }
-            items(pinned, key = { it.id }) { c -> Row_(pinned.indexOf(c), c) }
-            if (sections) item(key = "h-others") { SectionTitle("Autres", Modifier.animateItem().padding(horizontal = 20.dp)) }
-            items(others, key = { it.id }) { c -> Row_(pinned.size + others.indexOf(c), c) }
+            val updates = all.count { it.updateAvailable }
+            if (filter == ContainerFilter.Updates && updates > 0 && state.updatesEnabled) {
+                item(key = "update-all") {
+                    androidx.compose.material3.Button(
+                        onClick = { haptics.tick(); confirmGroup = "*" to "update" },
+                        enabled = state.runningJob == null,
+                        shapes = androidx.compose.material3.ButtonDefaults.shapes(),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).animateItem(),
+                    ) {
+                        Icon(Icons.Rounded.SystemUpdateAlt, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (updates == 1) "Mettre à jour le conteneur" else "Tout mettre à jour ($updates conteneurs)")
+                    }
+                }
+            }
+            if (grouped) {
+                // Une section par stack compose ; les conteneurs hors stack à la fin.
+                val stacks = list.groupBy { it.project }.toSortedMap(compareBy<String> { it.isEmpty() }.thenBy { it.lowercase() })
+                val order = stacks.values.flatten()
+                stacks.forEach { (project, members) ->
+                    item(key = "stack-$project") {
+                        StackHeader(
+                            project = project,
+                            members = all.filter { it.project == project },
+                            updatesEnabled = state.updatesEnabled,
+                            actions = state.stackActions,
+                            busy = state.runningJob != null,
+                            onAction = { action ->
+                                haptics.tick()
+                                if (action in setOf("update", "stop", "restart")) confirmGroup = project to action else runGroup(project, action)
+                            },
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp).animateItem(),
+                        )
+                    }
+                    items(members, key = { it.id }) { c -> Row_(order.indexOf(c), c) }
+                }
+            } else {
+                val sections = pinned.isNotEmpty() && others.isNotEmpty()
+                if (sections) item(key = "h-pinned") { SectionTitle("Épinglés", Modifier.animateItem().padding(horizontal = 20.dp)) }
+                items(pinned, key = { it.id }) { c -> Row_(pinned.indexOf(c), c) }
+                if (sections) item(key = "h-others") { SectionTitle("Autres", Modifier.animateItem().padding(horizontal = 20.dp)) }
+                items(others, key = { it.id }) { c -> Row_(pinned.size + others.indexOf(c), c) }
+            }
         }
+    }
+
+    confirmGroup?.let { (project, action) ->
+        val all_ = project == "*"
+        AlertDialog(
+            onDismissRequest = { confirmGroup = null },
+            icon = { Icon(if (action == "stop") Icons.Rounded.Stop else if (action == "restart") Icons.Rounded.RestartAlt else Icons.Rounded.SystemUpdateAlt, null) },
+            title = {
+                Text(
+                    when {
+                        all_ -> "Tout mettre à jour ?"
+                        else -> "${StackActions[action]} la stack « $project » ?"
+                    },
+                )
+            },
+            text = {
+                Text(
+                    when (action) {
+                        "update" -> (if (all_) "Chaque conteneur ayant une nouvelle image" else "Chaque conteneur de la stack") +
+                            " est mis à jour l'un après l'autre : téléchargement, puis recréation à l'identique. " +
+                            "En cas d'échec, l'ancienne version du conteneur concerné est rétablie."
+                        "stop" -> "Tous les conteneurs de la stack seront arrêtés (sauf l'agent Vigie). Vigie ne les signalera pas comme en panne."
+                        else -> "Tous les conteneurs de la stack vont redémarrer l'un après l'autre."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmGroup = null; runGroup(project, action) }) {
+                    Text(if (all_) "Tout mettre à jour" else StackActions.getValue(action))
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmGroup = null }) { Text("Annuler") } },
+        )
     }
 
     confirmStop?.let { c ->

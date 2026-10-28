@@ -43,8 +43,10 @@ type Config struct {
 
 	ChecksSeed string
 	ShowQR     bool
-	QRInvert   bool
-	Ignore     map[string]bool
+	// AllowUpdates autorise le téléchargement d'images et la recréation des conteneurs depuis l'appli.
+	AllowUpdates bool
+	QRInvert     bool
+	Ignore       map[string]bool
 
 	// FirstStart vaut true quand le token vient d'être généré (affichage du QR).
 	FirstStart bool
@@ -77,6 +79,7 @@ func Load() (*Config, error) {
 		CheckFailures:     int(envFloat("VIGIE_CHECK_FAILURES", 2)),
 		ChecksSeed:        os.Getenv("VIGIE_CHECKS"),
 		ShowQR:            envBool("VIGIE_SHOW_QR", false),
+		AllowUpdates:      envBool("VIGIE_ALLOW_UPDATES", true),
 		QRInvert:          envBool("VIGIE_QR_INVERT", false),
 		Ignore:            map[string]bool{},
 	}

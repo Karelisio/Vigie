@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.NewReleases
 import androidx.compose.material.icons.rounded.NotificationsOff
@@ -208,7 +209,16 @@ fun AlertSettingsScreen(nav: NavHostController, vm: AlertSettingsViewModel = vie
                         }
                     }
                     item {
-                        SectionCard(Modifier.cascade(3), title = "Conteneurs en sourdine") {
+                        SectionCard(Modifier.cascade(3), title = "Mises à jour d'images") {
+                            ToggleRow(
+                                Icons.Rounded.DeleteSweep, "Supprimer l'ancienne image",
+                                "Libère l'espace disque après une mise à jour réussie",
+                                s.pruneImages,
+                            ) { on -> haptics.toggle(on); draft = s.copy(pruneImages = on) }
+                        }
+                    }
+                    item {
+                        SectionCard(Modifier.cascade(4), title = "Conteneurs en sourdine") {
                             if (s.muted.isEmpty()) {
                                 Text(
                                     "Aucun. Coupe les notifications d'un conteneur avec la cloche de sa fiche.",

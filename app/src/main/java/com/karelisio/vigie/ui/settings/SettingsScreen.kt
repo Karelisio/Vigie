@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Fingerprint
+import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.NotificationsActive
@@ -112,6 +113,8 @@ class SettingsViewModel : ViewModel() {
         return runCatching { c.repository.testPush(token); "Notification envoyée" }.getOrElse { it.message ?: "Échec" }
     }
 
+    suspend fun updateAgent(): String? = runCatching { c.repository.updateAgent(); null }.getOrElse { "Échec : ${it.message}" }
+
     suspend fun checkUpdate(): String = runCatching {
         if (c.updater.check(force = true) == null) "Vigie est à jour (${c.updater.currentVersion})" else ""
     }.getOrElse { "Vérification impossible : ${it.message}" }
@@ -129,6 +132,33 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 96.dp
     val context = LocalContext.current
     var lockDialog by remember { mutableStateOf(false) }
+    var agentDialog by remember { mutableStateOf(false) }
+    val guard = com.karelisio.vigie.security.LocalActionGuard.current
+    val live by appContainer.repository.live.collectAsStateWithLifecycle()
+
+    if (agentDialog) {
+        AlertDialog(
+            onDismissRequest = { agentDialog = false },
+            icon = { Icon(Icons.Rounded.SystemUpdateAlt, null) },
+            title = { Text("Mettre à jour l'agent ?") },
+            text = {
+                Text(
+                    "Vigie télécharge la dernière image de l'agent puis se remplace (environ 10 secondes de coupure). " +
+                        "Si la nouvelle version ne démarre pas, l'ancienne est rétablie automatiquement.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    agentDialog = false
+                    scope.launch {
+                        if (!guard("Mettre à jour l'agent")) return@launch
+                        vm.updateAgent()?.let { snackbar.showSnackbar(it) }
+                    }
+                }) { Text("Mettre à jour") }
+            },
+            dismissButton = { TextButton(onClick = { agentDialog = false }) { Text("Annuler") } },
+        )
+    }
 
     if (lockDialog) {
         LockDialog(prefs.lockMode, onDismiss = { lockDialog = false }) { mode ->
@@ -225,6 +255,20 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
             Row_(Icons.Rounded.SystemUpdate, "Rechercher une mise à jour", "Version ${appContainer.updater.currentVersion}") {
                 scope.launch { vm.checkUpdate().takeIf { it.isNotEmpty() }?.let { snackbar.showSnackbar(it) } }
             }
+        }
+        item {
+            val i = info
+            val failed = i?.lastSelfUpdate?.takeIf { !it.ok && System.currentTimeMillis() - it.ts < 7 * 86_400_000L }
+            Row_(
+                Icons.Rounded.SystemUpdateAlt, "Mettre à jour l'agent",
+                when {
+                    i == null -> "Télécharge la dernière image et redémarre l'agent"
+                    !i.updatesEnabled -> "Agent ${i.version} : fais une première fois Pull + Redeploy dans Dockhand"
+                    live.runningJob != null -> "Une opération est en cours…"
+                    failed != null -> "Dernière tentative annulée : ${failed.error}"
+                    else -> "Agent ${i.version} · télécharge la dernière image et redémarre"
+                },
+            ) { if (i?.updatesEnabled == true && live.runningJob == null) agentDialog = true }
         }
         item { Row_(Icons.Rounded.Info, "À propos", info?.let { "Agent ${it.version} · ${it.host.hostname}" } ?: "Vigie") { nav.navigate(AboutRoute) } }
     }

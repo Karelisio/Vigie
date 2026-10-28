@@ -244,6 +244,8 @@ data class ServerInfo(
     val thresholds: Thresholds = Thresholds(),
     @SerialName("push_enabled") val pushEnabled: Boolean = false,
     @SerialName("public_url") val publicUrl: String = "",
+    @SerialName("updates_enabled") val updatesEnabled: Boolean = false,
+    @SerialName("last_self_update") val lastSelfUpdate: SelfUpdateResult? = null,
 )
 
 @Serializable
@@ -279,7 +281,14 @@ data class DockerEvent(
 )
 
 @Serializable
-data class Hello(val name: String = "", val version: String = "", val thresholds: Thresholds = Thresholds())
+data class Hello(
+    val name: String = "",
+    val version: String = "",
+    val thresholds: Thresholds = Thresholds(),
+    @SerialName("updates_enabled") val updatesEnabled: Boolean = false,
+    /** Actions de stack disponibles (agent 0.3.0 et plus). */
+    val stacks: Boolean = false,
+)
 
 @Serializable
 data class DeviceRegistration(val token: String, val name: String)
@@ -301,6 +310,7 @@ data class AgentSettings(
     @SerialName("image_updates") val imageUpdates: Boolean = true,
     @SerialName("oracle_watch") val oracleWatch: Boolean = true,
     @SerialName("cert_days") val certDays: Int = 14,
+    @SerialName("prune_images") val pruneImages: Boolean = true,
 )
 
 @Serializable
@@ -330,3 +340,37 @@ data class ImageStatus(
     @SerialName("checked_at") val checkedAt: Long = 0,
     val error: String? = null,
 )
+
+@Serializable
+data class UpdateRequest(@SerialName("pull_only") val pullOnly: Boolean = false)
+
+@Serializable
+data class JobResult(val name: String = "", val ok: Boolean = false, val updated: Boolean = false, val message: String = "")
+
+/** Opération longue de l'agent (téléchargement d'image, recréation, action de stack), suivie en direct. */
+@Serializable
+data class AgentJob(
+    val id: String = "",
+    val kind: String = "",
+    val action: String = "",
+    val target: String = "",
+    val phase: String = "",
+    val progress: Double = 0.0,
+    val message: String = "",
+    val done: Boolean = false,
+    val ok: Boolean = false,
+    val error: String? = null,
+    val results: List<JobResult> = emptyList(),
+    @SerialName("started_at") val startedAt: Long = 0,
+    @SerialName("finished_at") val finishedAt: Long = 0,
+) {
+    /** Vrai si l'opération concerne ce conteneur (directement ou via sa stack). */
+    fun concerns(c: Container): Boolean = when (kind) {
+        "stack" -> c.project == target
+        "batch" -> c.updateAvailable || results.any { it.name == c.name }
+        else -> target == c.name
+    }
+}
+
+@Serializable
+data class SelfUpdateResult(val ok: Boolean = false, val error: String? = null, val from: String = "", val ts: Long = 0)

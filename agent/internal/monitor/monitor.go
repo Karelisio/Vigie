@@ -144,6 +144,7 @@ type Monitor struct {
 	img        *images.Checker
 	updates    map[string]images.Status // nom du conteneur → état de son image
 	digests    map[string][]string      // ID d'image → RepoDigests
+	transient  map[string]bool          // anciens conteneurs renommés pendant une mise à jour
 
 	refresh chan struct{}
 
@@ -155,22 +156,23 @@ type Monitor struct {
 
 func New(cfg *config.Config, dk *docker.Client, sys *system.Collector, st *store.Store, set *settings.Manager, log *slog.Logger) *Monitor {
 	m := &Monitor{
-		set:     set,
-		img:     images.NewChecker(log),
-		updates: map[string]images.Status{},
-		digests: map[string][]string{},
-		cfg:     cfg,
-		dk:      dk,
-		sys:     sys,
-		st:      st,
-		log:     log,
-		inspect: map[string]inspectEntry{},
-		prev:    map[string]statPrev{},
-		stopped: map[string]bool{},
-		actions: map[string]time.Time{},
-		ctrAcc:  map[string]*ctrAcc{},
-		refresh: make(chan struct{}, 1),
-		selfID:  detectSelfID(),
+		set:       set,
+		img:       images.NewChecker(log),
+		updates:   map[string]images.Status{},
+		digests:   map[string][]string{},
+		transient: map[string]bool{},
+		cfg:       cfg,
+		dk:        dk,
+		sys:       sys,
+		st:        st,
+		log:       log,
+		inspect:   map[string]inspectEntry{},
+		prev:      map[string]statPrev{},
+		stopped:   map[string]bool{},
+		actions:   map[string]time.Time{},
+		ctrAcc:    map[string]*ctrAcc{},
+		refresh:   make(chan struct{}, 1),
+		selfID:    detectSelfID(),
 	}
 	m.Host = sys.HostInfo()
 	if cfg.ServerName == "" {
@@ -398,6 +400,11 @@ func (m *Monitor) buildContainer(ctx context.Context, c docker.Container) Contai
 		}
 	}
 	ci.StoppedByUser = stoppedByUser && c.State != "running"
+	m.mu.RLock()
+	if m.transient[name] {
+		ci.Ignored = true
+	}
+	m.mu.RUnlock()
 	ci.Muted = m.set.Get().IsMuted(name)
 	if entry.in != nil {
 		ci.ImageRef = entry.in.Config.Image
@@ -879,3 +886,23 @@ func (m *Monitor) ImageUpdates() map[string]images.Status {
 }
 
 func (m *Monitor) Settings() *settings.Manager { return m.set }
+
+// SetTransient masque un conteneur temporaire (ancienne version renommée pendant une mise à jour).
+func (m *Monitor) SetTransient(name string, on bool) {
+	m.mu.Lock()
+	if on {
+		m.transient[name] = true
+	} else {
+		delete(m.transient, name)
+	}
+	m.mu.Unlock()
+}
+
+// AfterUpdate rafraîchit la liste puis l'état des images une fois les conteneurs recréés.
+func (m *Monitor) AfterUpdate() {
+	m.Refresh()
+	go func() {
+		time.Sleep(5 * time.Second)
+		m.CheckImages(context.Background(), false)
+	}()
+}

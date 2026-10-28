@@ -23,6 +23,7 @@ Dates en millisecondes Unix. Erreurs : `{"error": "message"}` avec le code HTTP 
 | GET | `/api/v1/containers/{id}/logs?tail=300` | `lines[]` : `ts, stream (stdout/stderr), line` |
 | WS | `/api/v1/containers/{id}/logs/stream?tail=300` | messages `{"type":"lines","data":[…]}`, puis `{"type":"end"}` si le conteneur s'arrête |
 | POST | `/api/v1/containers/{id}/start` · `/stop` · `/restart` | `{ok, state}` |
+| POST | `/api/v1/containers/{id}/update` | `{pull_only?}` : télécharge l'image et recrée le conteneur (ou télécharge seulement). Sur l'agent lui-même : remplacement via un conteneur auxiliaire. Réponse 202 : l'opération (`job`) |
 | GET | `/api/v1/containers/{id}/events?limit=80` | chronologie (30 jours) : `ts, action, detail, source` (`docker` ou `vigie`) |
 | POST | `/api/v1/containers/{id}/mute` | `{muted}` : coupe ou réactive ses notifications, renvoie les réglages |
 
@@ -50,7 +51,11 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 | POST | `/api/v1/devices/test` | `{token?}` : notification de test |
 | GET | `/api/v1/alerts?limit=50` | historique des alertes (30 jours) |
 | GET | `/api/v1/audit?limit=100` | journal des actions (90 jours) |
-| GET / PUT | `/api/v1/settings` | `{cpu, ram, disk, duration_min, quiet_enabled, quiet_start, quiet_end, muted[], image_updates, oracle_watch, cert_days}` |
+| POST | `/api/v1/stacks/{projet}/{action}` | `action` : `update`, `pull`, `restart`, `start`, `stop` sur tous les conteneurs du projet compose (202 : `job`) |
+| POST | `/api/v1/updates/apply` | met à jour tous les conteneurs qui ont une nouvelle image (202 : `job`) |
+| POST | `/api/v1/agent/update` | met à jour l'agent (202 : `job`) |
+| GET | `/api/v1/jobs` | opération en cours puis les 20 dernières : `id, kind, action, target, phase, progress, message, done, ok, error, results[]` |
+| GET / PUT | `/api/v1/settings` | `{cpu, ram, disk, duration_min, quiet_enabled, quiet_start, quiet_end, muted[], image_updates, oracle_watch, cert_days, prune_images}` (champs absents : valeur actuelle conservée) |
 | GET | `/api/v1/oracle` | risque de récupération Oracle Always Free : `applicable, risk (low/medium/high/unknown), days, cpu, mem, net, net_mbps, summary` |
 | GET | `/api/v1/images` | dernier résultat de la vérification des images, par conteneur |
 | POST | `/api/v1/images/check` | interroge les registres maintenant |
@@ -68,6 +73,9 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 | `event` | événement Docker (`start`, `die`, `health_status…`) |
 | `alert` | nouvelle alerte ou résolution |
 | `settings` | réglages modifiés |
+| `job` | avancement d'une mise à jour ou d'une action de stack (au plus 4 par seconde) |
+
+Une seule opération à la fois (409 sinon). `GET /api/v1/info` indique `updates_enabled` et `last_self_update` (`ok`, `error`, `from`, `ts`).
 
 Format : `{"type": "...", "data": ...}`. Un ping WebSocket est envoyé toutes les 25 s.
 

@@ -542,8 +542,21 @@ func (e *Engine) OnImageUpdates(names []string) {
 	e.dispatch(Notification{
 		Kind: "image", Severity: "info", Target: strings.Join(list, ", "),
 		Title: title,
-		Body:  "Nouvelle version publiée pour " + strings.Join(list, ", ") + ". Mets à jour depuis Dockhand.",
+		Body:  "Nouvelle version publiée pour " + strings.Join(list, ", ") + ". Mets à jour depuis l'appli.",
 	}, false, true)
+}
+
+// NotifyJob signale la fin d'une mise à jour lancée depuis l'appli, si celle-ci est fermée
+// (appli ouverte : elle affiche déjà le résultat en direct).
+func (e *Engine) NotifyJob(title, body string, ok bool) {
+	if e.mon.Subscribers() > 0 {
+		return
+	}
+	sev := "critical"
+	if ok {
+		sev = "info"
+	}
+	e.dispatch(Notification{Kind: "job", Severity: sev, Target: title, Title: title, Body: body}, ok, true)
 }
 
 // ---- Tâches périodiques : résumé des heures calmes, risque Oracle ----

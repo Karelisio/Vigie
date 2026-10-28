@@ -39,7 +39,8 @@ services:
 
       TZ: "Europe/Paris"
     volumes:
-      # API Docker : lecture + start/stop/restart (rien d'autre n'est exposé par l'agent).
+      # API Docker : lecture, start/stop/restart et mises à jour d'images depuis l'appli
+      # (VIGIE_ALLOW_UPDATES: "false" pour les désactiver).
       - /var/run/docker.sock:/var/run/docker.sock
       # Métriques de l'hôte, en lecture seule.
       - /proc:/host/proc:ro

@@ -2,6 +2,17 @@
 
 Le workflow de release publie la section correspondant au tag (`## [X.Y.Z]`).
 
+## [0.3.0]
+
+- Mises à jour depuis l'appli, sans passer par Dockhand : bouton « Mettre à jour » dans la fiche d'un conteneur, téléchargement seul de l'image, « Tout mettre à jour » dans le filtre Mises à jour.
+- Vue « par stack » dans Conteneurs : mettre à jour, télécharger, redémarrer, démarrer ou arrêter toute une stack compose.
+- Le conteneur est recréé à l'identique (nom, réseaux, volumes, variables, labels compose) ; s'il ne démarre pas, l'ancienne version est rétablie automatiquement. Les conteneurs qui partagent son réseau (ex. traefik dans gerbil) sont rattachés au nouveau.
+- Mise à jour de l'agent lui-même (Réglages → Mettre à jour l'agent), avec retour arrière automatique.
+- Progression en direct (bandeau animé), résultat détaillé par conteneur, notification à la fin si l'appli est fermée.
+- Notification « nouvelle image » : bouton « Mettre à jour » / « Tout mettre à jour ».
+- Option : supprimer l'ancienne image après une mise à jour réussie (activée par défaut).
+- Agent : dernière mise à jour manuelle à faire dans Dockhand (Pull + Redeploy) ; les suivantes se feront depuis l'appli.
+
 ## [0.2.0]
 
 - Notifications : bouton « Redémarrer » directement dans l'alerte d'un conteneur.

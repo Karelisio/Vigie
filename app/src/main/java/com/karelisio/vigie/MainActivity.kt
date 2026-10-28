@@ -128,7 +128,38 @@ private fun Root(prefs: UserPrefs, intent: Intent?, consumed: () -> Unit) {
     // Liens profonds : QR « vigie://connect », raccourcis, notifications.
     val guard = LocalActionGuard.current
     val scope = rememberCoroutineScope()
+
+    // Bouton d'une notification quand le verrou est actif. L'activité étant exportée, l'action
+    // n'est jamais lancée sans un appui explicite de l'utilisateur dans l'appli.
+    fun confirmAction(action: String, id: String, name: String) {
+        val (question, label) = when (action) {
+            "update" -> "Mettre à jour $name ?" to "Mettre à jour"
+            "update_all" -> "Tout mettre à jour ?" to "Tout mettre à jour"
+            else -> "Redémarrer $name ?" to "Redémarrer"
+        }
+        scope.launch {
+            if (prefs.lockMode == LockMode.Open) c.lock.unlocked.first { it }
+            val confirmed = snackbar.showSnackbar(
+                question,
+                actionLabel = label,
+                withDismissAction = true,
+                duration = SnackbarDuration.Long,
+            ) == SnackbarResult.ActionPerformed
+            if (!confirmed || !guard(question.removeSuffix(" ?"))) return@launch
+            val r = runCatching {
+                when (action) {
+                    "update" -> c.repository.updateContainer(id)
+                    "update_all" -> c.repository.updateAll()
+                    else -> c.repository.action(id, "restart")
+                }
+            }
+            if (action == "restart" || r.isFailure) {
+                snackbar.showSnackbar(r.fold({ "$name redémarré" }, { "Échec : ${it.message}" }))
+            }
+        }
+    }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val haptics = com.karelisio.vigie.ui.components.rememberHaptics()
     LaunchedEffect(intent) {
         val i = intent ?: return@LaunchedEffect
         consumed()
@@ -136,6 +167,18 @@ private fun Root(prefs: UserPrefs, intent: Intent?, consumed: () -> Unit) {
         val ready = c.servers.active != null && prefs.onboardingDone
         when {
             data?.scheme == "vigie" && data.host == "connect" -> nav.navigate(ServerEditRoute(link = data.toString()))
+            // Notifications d'abord : leurs intents peuvent aussi porter un lien « vigie://open ».
+            i.hasExtra(Notifications.EXTRA_CONTAINER) || i.hasExtra(Notifications.EXTRA_CONTAINER_NAME) -> {
+                val id = i.getStringExtra(Notifications.EXTRA_CONTAINER) ?: i.getStringExtra(Notifications.EXTRA_CONTAINER_NAME)!!
+                val name = i.getStringExtra(Notifications.EXTRA_CONTAINER_NAME) ?: id.take(12)
+                nav.navigateTab(HomeRoute)
+                nav.navigate(ContainerRoute(id, name))
+                i.getStringExtra(Notifications.EXTRA_ACTION)?.let { confirmAction(it, id, name) }
+            }
+            i.getStringExtra(Notifications.EXTRA_ACTION) == "update_all" -> {
+                nav.navigateTab(ContainersRoute)
+                confirmAction("update_all", "", "")
+            }
             data?.scheme == "vigie" && data.host == "open" && ready -> when (data.path) {
                 "/containers" -> nav.navigateTab(ContainersRoute)
                 "/checks" -> nav.navigateTab(ChecksRoute)
@@ -147,27 +190,6 @@ private fun Root(prefs: UserPrefs, intent: Intent?, consumed: () -> Unit) {
                 Shortcuts.reportUsed(context, name)
                 nav.navigateTab(ContainersRoute)
                 nav.navigate(LogsRoute(id, name))
-            }
-            i.hasExtra(Notifications.EXTRA_CONTAINER) || i.hasExtra(Notifications.EXTRA_CONTAINER_NAME) -> {
-                val id = i.getStringExtra(Notifications.EXTRA_CONTAINER) ?: i.getStringExtra(Notifications.EXTRA_CONTAINER_NAME)!!
-                val name = i.getStringExtra(Notifications.EXTRA_CONTAINER_NAME) ?: id.take(12)
-                nav.navigateTab(HomeRoute)
-                nav.navigate(ContainerRoute(id, name))
-                // Bouton « Redémarrer » d'une notification quand le verrou est actif. L'activité étant exportée,
-                // l'action n'est jamais lancée sans un appui explicite de l'utilisateur.
-                if (i.getBooleanExtra(Notifications.EXTRA_RESTART, false)) scope.launch {
-                    if (prefs.lockMode == LockMode.Open) c.lock.unlocked.first { it }
-                    val confirmed = snackbar.showSnackbar(
-                        "Redémarrer $name ?",
-                        actionLabel = "Redémarrer",
-                        withDismissAction = true,
-                        duration = SnackbarDuration.Long,
-                    ) == SnackbarResult.ActionPerformed
-                    if (!confirmed || !guard("Redémarrer $name")) return@launch
-                    val msg = runCatching { c.repository.action(id, "restart") }
-                        .fold({ "$name redémarré" }, { "Échec : ${it.message}" })
-                    snackbar.showSnackbar(msg)
-                }
             }
             i.hasExtra(Notifications.EXTRA_CHECK) -> nav.navigateTab(ChecksRoute)
         }
@@ -181,18 +203,55 @@ private fun Root(prefs: UserPrefs, intent: Intent?, consumed: () -> Unit) {
     // Alertes reçues en direct : petit message en bas de l'écran.
     LaunchedEffect(Unit) {
         c.repository.events.collect { e ->
-            if (e is LiveEvent.NewAlert) {
-                snackbar.currentSnackbarData?.dismiss()
-                snackbar.showSnackbar((if (e.alert.resolved) "✓ " else "⚠ ") + e.alert.title)
+            when (e) {
+                is LiveEvent.NewAlert -> {
+                    snackbar.currentSnackbarData?.dismiss()
+                    snackbar.showSnackbar((if (e.alert.resolved) "✓ " else "⚠ ") + e.alert.title)
+                }
+                // Fin d'une mise à jour ou d'une action de stack.
+                is LiveEvent.JobDone -> {
+                    if (e.job.ok) haptics.confirm() else haptics.reject()
+                    snackbar.currentSnackbarData?.dismiss()
+                    snackbar.showSnackbar((if (e.job.ok) "✓ " else "✗ ") + e.job.message)
+                    if (e.job.kind == "self" && e.job.ok) launch { reportSelfUpdate(e.job.startedAt) }
+                }
+                is LiveEvent.Message -> {
+                    snackbar.currentSnackbarData?.dismiss()
+                    snackbar.showSnackbar(e.text)
+                }
+                is LiveEvent.AgentUpdated -> {
+                    haptics.confirm()
+                    snackbar.currentSnackbarData?.dismiss()
+                    snackbar.showSnackbar("✓ Agent mis à jour : ${e.from} → ${e.to}")
+                }
+                else -> Unit
             }
         }
     }
 
     // Vérification de mise à jour au lancement (au plus toutes les 6 h).
+    // (La réussite d'une mise à jour de l'agent est annoncée par LiveEvent.AgentUpdated.)
     LaunchedEffect(Unit) {
         c.prefs.flow.first()
         runCatching { c.updater.check() }
     }
     val update by c.updater.state.collectAsState()
     UpdateSheet(update, c.updater)
+}
+
+/**
+ * Après le lancement d'une mise à jour de l'agent : si l'ancienne version a dû être rétablie,
+ * l'agent le consigne ; on le signale (la réussite est annoncée à la reconnexion).
+ */
+private suspend fun reportSelfUpdate(startedAt: Long) {
+    val c = appContainer
+    kotlinx.coroutines.delay(20_000)
+    repeat(12) {
+        val r = runCatching { c.repository.info() }.getOrNull()?.lastSelfUpdate
+        if (r != null && r.ts >= startedAt) {
+            if (!r.ok) c.repository.notifyLocal("✗ Mise à jour de l'agent annulée, ancienne version rétablie : ${r.error}")
+            return
+        }
+        kotlinx.coroutines.delay(10_000)
+    }
 }

@@ -28,6 +28,7 @@ type Settings struct {
 	ImageUpdates bool     `json:"image_updates"`
 	OracleWatch  bool     `json:"oracle_watch"`
 	CertDays     int      `json:"cert_days"`
+	PruneImages  bool     `json:"prune_images"` // supprimer l'ancienne image après une mise à jour
 }
 
 func (s Settings) AlertDuration() time.Duration { return time.Duration(s.DurationMin) * time.Minute }
@@ -123,6 +124,7 @@ func Load(ctx context.Context, st *store.Store, cfg *config.Config) *Manager {
 		ImageUpdates: true,
 		OracleWatch:  true,
 		CertDays:     14,
+		PruneImages:  true,
 	}
 	if raw := st.Get(ctx, key); raw != "" {
 		saved := s

@@ -9,14 +9,16 @@ import androidx.core.app.NotificationManagerCompat
 import com.karelisio.vigie.R
 import com.karelisio.vigie.appContainer
 import com.karelisio.vigie.data.ActionResult
+import com.karelisio.vigie.data.AgentJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
-/** Bouton « Redémarrer » des notifications : relance le conteneur sans ouvrir l'appli. */
+/** Boutons des notifications (redémarrer, mettre à jour) : agissent sans ouvrir l'appli. */
 class AlertActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        val action = intent.getStringExtra(Notifications.EXTRA_ACTION) ?: "restart"
         val ref = intent.getStringExtra(Notifications.EXTRA_CONTAINER) ?: return
         val name = intent.getStringExtra(Notifications.EXTRA_CONTAINER_NAME) ?: ref
         val url = intent.getStringExtra(Notifications.EXTRA_SERVER_URL).orEmpty().trimEnd('/')
@@ -27,12 +29,26 @@ class AlertActionReceiver : BroadcastReceiver() {
             val server = c.servers.servers.value.firstOrNull { url.isNotEmpty() && it.baseUrl == url } ?: c.servers.active
             val result = runCatching {
                 requireNotNull(server) { "Aucun serveur configuré" }
-                withTimeout(40_000) { c.api.postEmpty<ActionResult>(server, "/api/v1/containers/$ref/restart") }
+                withTimeout(40_000) {
+                    when (action) {
+                        "update" -> c.api.postEmpty<AgentJob>(server, "/api/v1/containers/$ref/update")
+                        "update_all" -> c.api.postEmpty<AgentJob>(server, "/api/v1/updates/apply")
+                        else -> c.api.postEmpty<ActionResult>(server, "/api/v1/containers/$ref/restart")
+                    }
+                }
+            }
+            val (ok, failed) = when (action) {
+                "update" -> "Mise à jour de $name lancée" to "Échec de la mise à jour de $name"
+                "update_all" -> "Mises à jour lancées" to "Échec des mises à jour"
+                else -> "$name redémarré" to "Échec du redémarrage de $name"
             }
             update(
                 context, notifId,
-                if (result.isSuccess) "$name redémarré" else "Échec du redémarrage de $name",
-                result.exceptionOrNull()?.message ?: "Commande envoyée depuis la notification.",
+                if (result.isSuccess) ok else failed,
+                result.exceptionOrNull()?.message ?: when (action) {
+                    "restart" -> "Commande envoyée depuis la notification."
+                    else -> "Tu recevras une notification à la fin."
+                },
                 result.isSuccess,
             )
             c.surfaces.refreshNow()

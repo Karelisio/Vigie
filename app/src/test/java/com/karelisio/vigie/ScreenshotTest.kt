@@ -236,6 +236,34 @@ class ScreenshotTest {
         }
     }
 
+    @Test
+    fun updates() = shot("updates") {
+        val job = com.karelisio.vigie.data.AgentJob(
+            id = "1", kind = "stack", action = "update", target = "stremio", phase = "pulling", progress = 0.46,
+            message = "comet : téléchargement 62 %",
+        )
+        val done = com.karelisio.vigie.data.AgentJob(
+            id = "2", kind = "stack", action = "update", target = "stremio", phase = "failed", done = true, ok = false, progress = 1.0,
+            message = "Échec : 2 mis à jour, 1 déjà à jour, 1 échec",
+            results = listOf(
+                com.karelisio.vigie.data.JobResult("aiostreams", true, true, "aiostreams mis à jour"),
+                com.karelisio.vigie.data.JobResult("comet", true, true, "comet mis à jour"),
+                com.karelisio.vigie.data.JobResult("redis", true, false, "redis : déjà à jour"),
+                com.karelisio.vigie.data.JobResult("aiometadata", false, false, "le nouveau aiometadata s'est arrêté (code 1) (ancienne version rétablie)"),
+            ),
+        )
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            com.karelisio.vigie.ui.containers.UpdateCard(
+                c = containers[1].copy(imageRef = "g0ldyy/comet:latest"), enabled = true, busy = true, job = job.copy(kind = "update", target = "comet"),
+                onUpdate = {}, onPull = {}, onStack = {},
+            )
+            com.karelisio.vigie.ui.containers.StackHeader("stremio", containers.take(5), updatesEnabled = true, actions = true, busy = false, onAction = {})
+            ContainerCard(containers[1], busy = false, onOpen = {})
+            com.karelisio.vigie.ui.components.JobBanner(job)
+            com.karelisio.vigie.ui.components.SectionCard(title = "Résultat") { com.karelisio.vigie.ui.components.JobProgress(done) }
+        }
+    }
+
     @Test fun lockScreen() = shot("lock", dark = true) { com.karelisio.vigie.security.LockScreen(visible = true) {} }
 
     @Test fun onboardingWelcome() = shot("onboarding_welcome") { WelcomePage(active = true) }

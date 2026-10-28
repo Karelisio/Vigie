@@ -26,7 +26,8 @@ object Notifications {
     const val EXTRA_CONTAINER_NAME = "container_name"
     const val EXTRA_CHECK = "check_id"
     const val EXTRA_SERVER_URL = "server_url"
-    const val EXTRA_RESTART = "restart"
+    /** Action demandée depuis une notification : restart, update ou update_all. */
+    const val EXTRA_ACTION = "action"
 
     fun createChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -72,6 +73,7 @@ object Notifications {
             if (data["kind"] == "container") putExtra(EXTRA_CONTAINER_NAME, data["target"])
             data["check_id"]?.let { putExtra(EXTRA_CHECK, it) }
             data["url"]?.let { putExtra(EXTRA_SERVER_URL, it) }
+            if (data["kind"] == "image") setData(android.net.Uri.parse("vigie://open/containers"))
         }
         val pi = PendingIntent.getActivity(
             context, key.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
@@ -95,24 +97,35 @@ object Notifications {
             .setAutoCancel(true)
             .setGroup(GROUP)
             .setContentIntent(pi)
-        val ref = data["container_id"] ?: data["target"]
-        if (!resolved && data["kind"] == "container" && !ref.isNullOrEmpty()) {
-            // Verrou actif : le bouton ouvre l'appli, qui demande l'empreinte avant d'agir.
-            val action = if (directActions) {
+        val target = data["target"].orEmpty()
+        val button: Triple<String, String, Int>? = when {
+            resolved -> null
+            data["kind"] == "container" && target.isNotEmpty() -> Triple("restart", "Redémarrer", R.drawable.ic_restart)
+            data["kind"] == "image" && target.contains(", ") -> Triple("update_all", "Tout mettre à jour", R.drawable.ic_update)
+            data["kind"] == "image" && target.isNotEmpty() -> Triple("update", "Mettre à jour", R.drawable.ic_update)
+            else -> null
+        }
+        if (button != null) {
+            val (action, label, icon) = button
+            val ref = if (data["kind"] == "container") data["container_id"] ?: target else target
+            // Verrou actif : le bouton ouvre l'appli, qui demande confirmation et empreinte avant d'agir.
+            val pending = if (directActions) {
                 val i = Intent(context, AlertActionReceiver::class.java).apply {
+                    putExtra(EXTRA_ACTION, action)
                     putExtra(EXTRA_CONTAINER, ref)
-                    putExtra(EXTRA_CONTAINER_NAME, data["target"])
+                    putExtra(EXTRA_CONTAINER_NAME, target)
                     putExtra(EXTRA_SERVER_URL, data["url"])
                     putExtra(AlertActionReceiver.EXTRA_NOTIFICATION_ID, key.hashCode())
                 }
                 PendingIntent.getBroadcast(context, key.hashCode(), i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             } else {
-                PendingIntent.getActivity(
-                    context, key.hashCode() + 1, Intent(intent).putExtra(EXTRA_RESTART, true),
-                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-                )
+                val i = Intent(intent).apply {
+                    putExtra(EXTRA_ACTION, action)
+                    if (action != "update_all") putExtra(EXTRA_CONTAINER_NAME, target)
+                }
+                PendingIntent.getActivity(context, key.hashCode() + 1, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             }
-            builder.addAction(R.drawable.ic_restart, "Redémarrer", action)
+            builder.addAction(icon, label, pending)
         }
         val n = builder.build()
         // Même identifiant pour l'incident et sa résolution : la résolution remplace l'alerte.

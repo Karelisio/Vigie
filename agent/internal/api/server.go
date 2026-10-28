@@ -19,8 +19,8 @@ import (
 	"github.com/karelisio/vigie/agent/internal/docker"
 	"github.com/karelisio/vigie/agent/internal/monitor"
 	"github.com/karelisio/vigie/agent/internal/oracle"
-	"github.com/karelisio/vigie/agent/internal/settings"
 	"github.com/karelisio/vigie/agent/internal/store"
+	"github.com/karelisio/vigie/agent/internal/updater"
 )
 
 type Server struct {
@@ -30,6 +30,7 @@ type Server struct {
 	st        *store.Store
 	runner    *checks.Runner
 	alerts    *alerts.Engine
+	upd       *updater.Manager
 	log       *slog.Logger
 	version   string
 	started   time.Time
@@ -37,9 +38,9 @@ type Server struct {
 	limiter   *limiter
 }
 
-func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, log *slog.Logger, version string) *Server {
+func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, upd *updater.Manager, log *slog.Logger, version string) *Server {
 	return &Server{
-		cfg: cfg, mon: mon, dk: dk, st: st, runner: runner, alerts: al, log: log, version: version,
+		cfg: cfg, mon: mon, dk: dk, st: st, runner: runner, alerts: al, upd: upd, log: log, version: version,
 		started:   time.Now(),
 		tokenHash: sha256.Sum256([]byte(cfg.Token)),
 		limiter:   newLimiter(cfg.RateLimit, cfg.RateBurst),
@@ -63,6 +64,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/containers/{id}/start", s.action("start"))
 	mux.HandleFunc("POST /api/v1/containers/{id}/stop", s.action("stop"))
 	mux.HandleFunc("POST /api/v1/containers/{id}/restart", s.action("restart"))
+	mux.HandleFunc("POST /api/v1/containers/{id}/update", s.updateContainer)
+	mux.HandleFunc("POST /api/v1/stacks/{project}/{action}", s.stackAction)
+	mux.HandleFunc("POST /api/v1/updates/apply", s.updateAll)
+	mux.HandleFunc("POST /api/v1/agent/update", s.updateAgent)
+	mux.HandleFunc("GET /api/v1/jobs", s.jobs)
 
 	mux.HandleFunc("GET /api/v1/checks", s.listChecks)
 	mux.HandleFunc("POST /api/v1/checks", s.createCheck)
@@ -133,14 +139,16 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	dv, _ = s.dk.Version(ctx)
 	out := map[string]any{
-		"name":          s.cfg.ServerName,
-		"version":       s.version,
-		"api":           1,
-		"host":          s.mon.Host,
-		"agent_started": s.started.UnixMilli(),
-		"thresholds":    s.mon.Thresholds(),
-		"push_enabled":  s.alerts.PushEnabled(),
-		"public_url":    s.cfg.PublicURL,
+		"name":             s.cfg.ServerName,
+		"version":          s.version,
+		"api":              1,
+		"host":             s.mon.Host,
+		"agent_started":    s.started.UnixMilli(),
+		"thresholds":       s.mon.Thresholds(),
+		"push_enabled":     s.alerts.PushEnabled(),
+		"public_url":       s.cfg.PublicURL,
+		"updates_enabled":  s.upd.Enabled(),
+		"last_self_update": updater.LastSelfUpdate(s.cfg.DataDir),
 	}
 	if dv != nil {
 		out["docker"] = dv
@@ -599,7 +607,8 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
-	var in settings.Settings
+	// Les champs absents gardent leur valeur actuelle (appli plus ancienne que l'agent).
+	in := s.mon.Settings().Get()
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "JSON invalide : "+err.Error())
 		return

@@ -35,7 +35,14 @@ data class LiveState(
     /** Derniers échantillons système, pour les mini-graphiques temps réel. */
     val recent: List<SystemSnapshot> = emptyList(),
     val loaded: Boolean = false,
+    val agentVersion: String = "",
+    val updatesEnabled: Boolean = false,
+    val stackActions: Boolean = false,
+    /** Opérations de l'agent, la plus récente en premier. */
+    val jobs: List<AgentJob> = emptyList(),
 ) {
+    /** Opération en cours (une seule à la fois côté agent). */
+    val runningJob: AgentJob? get() = jobs.firstOrNull { !it.done }
     val isLive get() = connection == Connection.Live
     val status get() = overview?.status ?: "unknown"
 }
@@ -43,6 +50,9 @@ data class LiveState(
 sealed interface LiveEvent {
     data class Docker(val event: DockerEvent) : LiveEvent
     data class NewAlert(val alert: Alert) : LiveEvent
+    data class JobDone(val job: AgentJob) : LiveEvent
+    data class AgentUpdated(val from: String, val to: String) : LiveEvent
+    data class Message(val text: String) : LiveEvent
 }
 
 /**
@@ -151,7 +161,11 @@ class LiveSession(
         when (type) {
             "hello" -> {
                 val h = VigieJson.decodeFromJsonElement(Hello.serializer(), data)
-                _state.update { it.copy(thresholds = h.thresholds) }
+                val previous = _state.value.agentVersion
+                _state.update { it.copy(thresholds = h.thresholds, agentVersion = h.version, updatesEnabled = h.updatesEnabled, stackActions = h.stacks) }
+                if (previous.isNotEmpty() && h.version.isNotEmpty() && previous != h.version) {
+                    _events.tryEmit(LiveEvent.AgentUpdated(previous, h.version))
+                }
             }
             "overview" -> {
                 val o = VigieJson.decodeFromJsonElement(Overview.serializer(), data)
@@ -180,6 +194,7 @@ class LiveSession(
                 val s = VigieJson.decodeFromJsonElement(AgentSettings.serializer(), data)
                 _state.update { it.copy(thresholds = Thresholds(s.cpu, s.ram, s.disk)) }
             }
+            "job" -> patchJob(VigieJson.decodeFromJsonElement(AgentJob.serializer(), data))
             "event" -> _events.tryEmit(LiveEvent.Docker(VigieJson.decodeFromJsonElement(DockerEvent.serializer(), data)))
             "alert" -> _events.tryEmit(LiveEvent.NewAlert(VigieJson.decodeFromJsonElement(Alert.serializer(), data)))
         }
@@ -195,6 +210,22 @@ class LiveSession(
     }
 
     fun setChecks(list: List<CheckStatus>) = _state.update { it.copy(checks = list) }
+
+    fun emit(e: LiveEvent) {
+        _events.tryEmit(e)
+    }
+
+    /** Met à jour une opération ; signale sa fin une seule fois. */
+    fun patchJob(job: AgentJob) {
+        var finished = false
+        _state.update { st ->
+            val before = st.jobs.firstOrNull { it.id == job.id }
+            if (before?.done == true) return@update st
+            finished = job.done
+            st.copy(jobs = (listOf(job) + st.jobs.filter { it.id != job.id }).take(10))
+        }
+        if (finished) _events.tryEmit(LiveEvent.JobDone(job))
+    }
 
     private companion object {
         const val RECENT = 90
