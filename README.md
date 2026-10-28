@@ -7,6 +7,13 @@ Surveille et pilote ton VPS depuis ton téléphone.
 
 Tout se déploie **sans SSH** : un `docker-compose` collé dans Dockhand, une ressource Pangolin, un QR code à scanner.
 
+<p align="center">
+  <img src="docs/screenshots/accueil.png" width="200" alt="Accueil radar" />
+  <img src="docs/screenshots/accueil-sombre.png" width="200" alt="Accueil en mode sombre, avec incidents" />
+  <img src="docs/screenshots/conteneurs.png" width="200" alt="Conteneurs" />
+  <img src="docs/screenshots/services.png" width="200" alt="Services surveillés" />
+</p>
+
 ---
 
 ## 1. L'image de l'agent
@@ -58,7 +65,10 @@ Le conteneur tourne en lecture seule, sans aucune capability Linux, limité à 1
 
 Les WebSockets (temps réel, logs en direct) passent par Pangolin sans réglage particulier.
 
-## 4. Connecter l'appli
+## 4. Installer et connecter l'appli
+
+Télécharge l'APK de la dernière version dans [Releases](https://github.com/Karelisio/Vigie/releases/latest) et installe-le. Les versions suivantes s'installent ensuite depuis l'appli elle-même.
+
 
 1. Dockhand › conteneur **vigie-agent** › **Logs** : un QR code s'affiche au premier démarrage.
 2. Appli Vigie › **Ajouter un serveur** › **Scanner le QR code**. L'URL et le token sont remplis automatiquement.
@@ -113,6 +123,17 @@ Crée un tag `vX.Y.Z` (GitHub › **Releases** › **Draft a new release** › *
 - publie la release avec l'APK et le changelog (section `## [X.Y.Z]` de [`CHANGELOG.md`](CHANGELOG.md), sinon la liste des commits).
 
 L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et propose la mise à jour.
+
+## L'appli en bref
+
+- **Accueil** : radar animé (vert et lent quand tout va bien, rouge et plus rapide en cas de problème, écho pulsé sur le point en défaut), jauges CPU/RAM/disque, réseau en temps réel, historique 24 h / 7 jours.
+- **Conteneurs** : recherche, filtres, glisser vers la droite pour redémarrer et vers la gauche pour arrêter ou démarrer (l'arrêt est confirmé), fiche détaillée avec graphiques, logs en direct avec recherche et niveaux colorés.
+- **Services** : checks HTTP (préréglages AIOStreams, Comet, AIOMetadata), latence, barres de disponibilité sur 24 h, 7 ou 90 jours.
+- **Widget** redimensionnable aux couleurs du système, **tuile** de réglages rapides, **mode hors ligne** avec l'heure de la dernière mise à jour.
+- Plusieurs serveurs possibles (nom, URL, token), tokens chiffrés sur le téléphone (EncryptedSharedPreferences).
+- Respecte le réglage système « Supprimer les animations ».
+
+Captures d'écran : `./gradlew :app:recordRoborazziDebug` (rendu dans `app/build/outputs/roborazzi/`).
 
 ---
 

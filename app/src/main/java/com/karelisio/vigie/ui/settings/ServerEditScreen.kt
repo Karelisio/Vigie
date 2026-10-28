@@ -50,10 +50,9 @@ fun rememberScanLauncher(nav: NavHostController): () -> Unit {
 }
 
 @Composable
-fun ServerEditScreen(nav: NavHostController, route: ServerEditRoute) {
+fun ServerEditScreen(nav: NavHostController, route: ServerEditRoute, entry: androidx.navigation.NavBackStackEntry) {
     val existing = route.id?.let { appContainer.servers.get(it) }
-    val scanned by (nav.currentBackStackEntry?.savedStateHandle?.getStateFlow<String?>(SCAN_RESULT, null)
-        ?: kotlinx.coroutines.flow.MutableStateFlow(null)).collectAsStateWithLifecycle()
+    val scanned by entry.savedStateHandle.getStateFlow<String?>(SCAN_RESULT, null).collectAsStateWithLifecycle()
     val scan = rememberScanLauncher(nav)
     var confirmDelete by remember { mutableStateOf(false) }
 

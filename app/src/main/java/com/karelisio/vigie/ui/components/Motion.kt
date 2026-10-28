@@ -44,8 +44,14 @@ fun rememberHaptics(): Haptics {
 fun Modifier.shakeOnAppear(enabled: Boolean, key: Any? = Unit): Modifier = composed {
     val reduced = LocalReducedMotion.current
     val offset = remember { Animatable(0f) }
+    // Premier affichage d'un élément revenu à l'écran par défilement : pas de tremblement.
+    val fresh = screenJustOpened()
+    val skipFirst = remember { !fresh }
+    val first = remember { booleanArrayOf(true) }
     LaunchedEffect(enabled, key) {
-        if (enabled && !reduced) {
+        val skip = first[0] && skipFirst
+        first[0] = false
+        if (enabled && !reduced && !skip) {
             offset.animateTo(0f, keyframes {
                 durationMillis = 520
                 (-9f) at 60

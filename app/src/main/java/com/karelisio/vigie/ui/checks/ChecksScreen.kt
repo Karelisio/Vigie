@@ -275,7 +275,7 @@ fun ChecksScreen(nav: NavHostController, vm: ChecksViewModel = viewModel()) {
 }
 
 @Composable
-private fun CheckCard(
+internal fun CheckCard(
     c: CheckStatus,
     history: CheckHistory?,
     range: RangeSpec,

@@ -145,7 +145,7 @@ class LogsViewModel : ViewModel() {
             var attempts = 0
             var t = tail
             while (true) {
-                repo.logStream(ref, t).collect { e ->
+                runCatching { repo.logStream(ref, t).collect { e ->
                     when (e) {
                         LogEvent.Connected -> {
                             attempts = 0
@@ -161,6 +161,10 @@ class LogsViewModel : ViewModel() {
                             _message.value = e.message
                         }
                     }
+                } }.onFailure {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    _status.value = StreamStatus.Failed
+                    _message.value = it.message
                 }
                 if (_status.value == StreamStatus.Ended) return@launch
                 attempts++
@@ -385,7 +389,7 @@ private fun copy(context: Context, text: String) {
 }
 
 @Composable
-private fun LogRow(line: UiLine, query: String, animate: Boolean, modifier: Modifier, onCopy: () -> Unit) {
+internal fun LogRow(line: UiLine, query: String, animate: Boolean, modifier: Modifier, onCopy: () -> Unit) {
     val colors = Vigie.status
     val scheme = MaterialTheme.colorScheme
     val reduced = Vigie.reducedMotion

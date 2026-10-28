@@ -120,14 +120,14 @@ fun VigieNavHost(nav: NavHostController, start: Any, snackbar: SnackbarHostState
                         popEnterTransition = { if (reduced) fadeIn() else popEnter() },
                         popExitTransition = { if (reduced) fadeOut() else popExit() },
                     ) {
-                        screen<OnboardingRoute> { OnboardingScreen(nav) }
+                        screen<OnboardingRoute> { OnboardingScreen(nav, it) }
                         screen<HomeRoute> { HomeScreen(nav) }
                         screen<ContainersRoute> { ContainersScreen(nav) }
                         screen<ChecksRoute> { ChecksScreen(nav) }
                         screen<SettingsRoute> { SettingsScreen(nav) }
                         screen<ContainerRoute> { ContainerDetailScreen(nav, it.toRoute<ContainerRoute>()) }
                         screen<LogsRoute> { LogsScreen(nav, it.toRoute<LogsRoute>()) }
-                        screen<ServerEditRoute> { ServerEditScreen(nav, it.toRoute<ServerEditRoute>()) }
+                        screen<ServerEditRoute> { ServerEditScreen(nav, it.toRoute<ServerEditRoute>(), it) }
                         screen<ScanRoute> { ScanScreen(nav) }
                         screen<PermissionsRoute> { PermissionsScreen(nav) }
                         screen<AlertsRoute> { AlertsScreen(nav) }
@@ -175,7 +175,11 @@ private inline fun <reified T : Any> androidx.navigation.NavGraphBuilder.screen(
     noinline content: @Composable (NavBackStackEntry) -> Unit,
 ) {
     composable<T> { backStack ->
-        CompositionLocalProvider(LocalNavScope provides this) { content(backStack) }
+        val openedAt = remember { android.os.SystemClock.uptimeMillis() }
+        CompositionLocalProvider(
+            LocalNavScope provides this,
+            com.karelisio.vigie.ui.components.LocalScreenOpenedAt provides openedAt,
+        ) { content(backStack) }
     }
 }
 

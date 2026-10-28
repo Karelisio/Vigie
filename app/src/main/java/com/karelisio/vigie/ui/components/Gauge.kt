@@ -3,7 +3,7 @@ package com.karelisio.vigie.ui.components
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,10 +17,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -84,17 +87,17 @@ fun CircularGauge(
 ) {
     val status = Vigie.status
     val target = (value / 100.0).coerceIn(0.0, 1.0).toFloat()
-    val progress by animateFloatAsState(target, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessVeryLow), label = "gauge")
+    // Remplissage en ressort depuis 0 à l'apparition, puis suivi des mises à jour en direct.
+    val reduced = Vigie.reducedMotion
+    val anim = remember { Animatable(if (reduced) target else 0f) }
+    LaunchedEffect(target) { anim.animateTo(target, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessVeryLow)) }
+    val progress = anim.value
     val color by animateColorAsState(status.forLevel(value, threshold), spring(stiffness = Spring.StiffnessLow), label = "gaugeColor")
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
     val thresholdMark = MaterialTheme.colorScheme.outline
 
-    Box(
-        modifier
-            .aspectRatio(1f)
-            .semantics { contentDescription = "$label ${value.roundToInt()} %" },
-        contentAlignment = Alignment.Center,
-    ) {
+    Column(modifier.semantics(mergeDescendants = true) { contentDescription = "$label ${value.roundToInt()} %" }, horizontalAlignment = Alignment.CenterHorizontally) {
+    Box(Modifier.fillMaxWidth().aspectRatio(1f), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
             val stroke = size.minDimension * 0.095f
             val inset = stroke / 2 + 2.dp.toPx()
@@ -126,8 +129,9 @@ fun CircularGauge(
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = Alignment.Bottom) {
+                // Le compteur suit le remplissage de l'arc.
                 AnimatedCounter(
-                    value = value.roundToInt(),
+                    value = (progress * 100).roundToInt(),
                     style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -138,15 +142,16 @@ fun CircularGauge(
                 )
             }
             Text(label, style = MaterialTheme.typography.labelLarge, color = color, textAlign = TextAlign.Center)
-            if (caption != null) {
-                Text(
-                    caption,
-                    style = MaterialTheme.typography.labelSmall.numeric(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                )
-            }
         }
+    }
+    if (caption != null) {
+        Text(
+            caption,
+            style = MaterialTheme.typography.labelSmall.numeric(),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+        )
+    }
     }
 }

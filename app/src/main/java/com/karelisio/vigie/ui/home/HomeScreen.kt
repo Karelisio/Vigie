@@ -53,6 +53,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -149,51 +150,69 @@ fun HomeScreen(nav: NavHostController, vm: HomeViewModel = viewModel()) {
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val servers by vm.servers.collectAsStateWithLifecycle()
     val activeId by vm.activeId.collectAsStateWithLifecycle()
-    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 96.dp
 
     RadarRefreshBox(isRefreshing = refreshing, onRefresh = vm::refresh, modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = bottom),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item(key = "header") {
-                Header(
-                    name = servers.firstOrNull { it.id == activeId }?.name ?: "Vigie",
-                    state = state,
-                    servers = servers.map { it.id to it.name },
-                    onSwitch = vm::switchServer,
-                    onAdd = { nav.navigate(ServerEditRoute()) },
-                )
-            }
-            item(key = "banner") { ConnectionBanner(state) }
-            item(key = "radar") { RadarSection(state) }
-            val issues = state.overview?.issues.orEmpty()
-            items(issues, key = { "issue-${it.kind}-${it.target}" }) { issue ->
-                IssueCard(
-                    issue,
-                    Modifier
-                        .padding(horizontal = 16.dp)
-                        .animateItem()
-                        .shakeOnAppear(issue.severity == "critical", issue.target),
-                ) {
-                    when (issue.kind) {
-                        "container" -> nav.navigate(ContainerRoute(issue.id ?: issue.target, issue.target))
-                        "check" -> nav.navigateTab(ChecksRoute)
-                        else -> Unit
-                    }
+        HomeContent(
+            state = state,
+            history = history,
+            range = vm.range,
+            serverName = servers.firstOrNull { it.id == activeId }?.name ?: "Vigie",
+            servers = servers.map { it.id to it.name },
+            onSwitch = vm::switchServer,
+            onAdd = { nav.navigate(ServerEditRoute()) },
+            onRange = vm::loadHistory,
+            onIssue = { issue ->
+                when (issue.kind) {
+                    "container" -> nav.navigate(ContainerRoute(issue.id ?: issue.target, issue.target))
+                    "check" -> nav.navigateTab(ChecksRoute)
+                    else -> Unit
                 }
-            }
-            item(key = "gauges") { GaugesCard(state, Modifier.padding(horizontal = 16.dp).cascade(0)) }
-            item(key = "network") { NetworkCard(state, Modifier.padding(horizontal = 16.dp).cascade(1)) }
-            item(key = "facts") { FactsRow(state, Modifier.padding(horizontal = 16.dp).cascade(2)) }
-            item(key = "history") {
-                HistoryCard(history, vm.range, state, onRange = vm::loadHistory, modifier = Modifier.padding(horizontal = 16.dp).cascade(3))
-            }
-            item(key = "containers") {
-                ContainersSummary(state, Modifier.padding(horizontal = 16.dp).cascade(4)) { nav.navigateTab(ContainersRoute) }
-            }
+            },
+            onContainers = { nav.navigateTab(ContainersRoute) },
+        )
+    }
+}
+
+/** Contenu de l'accueil, sans état (prévisualisable). */
+@Composable
+internal fun HomeContent(
+    state: LiveState,
+    history: History<SysPoint>?,
+    range: String,
+    serverName: String,
+    servers: List<Pair<String, String>>,
+    onSwitch: (String) -> Unit,
+    onAdd: () -> Unit,
+    onRange: (String) -> Unit,
+    onIssue: (Issue) -> Unit,
+    onContainers: () -> Unit,
+) {
+    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 96.dp
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = bottom),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item(key = "header") { Header(serverName, state, servers, onSwitch, onAdd) }
+        item(key = "banner") { ConnectionBanner(state) }
+        item(key = "radar") { RadarSection(state) }
+        val issues = state.overview?.issues.orEmpty()
+        items(issues, key = { "issue-${it.kind}-${it.target}" }) { issue ->
+            IssueCard(
+                issue,
+                Modifier
+                    .padding(horizontal = 16.dp)
+                    .animateItem()
+                    .shakeOnAppear(issue.severity == "critical", issue.target),
+            ) { onIssue(issue) }
         }
+        item(key = "gauges") { GaugesCard(state, Modifier.padding(horizontal = 16.dp).cascade(0)) }
+        item(key = "network") { NetworkCard(state, Modifier.padding(horizontal = 16.dp).cascade(1)) }
+        item(key = "facts") { FactsRow(state, Modifier.padding(horizontal = 16.dp).cascade(2)) }
+        item(key = "history") {
+            HistoryCard(history, range, state, onRange = onRange, modifier = Modifier.padding(horizontal = 16.dp).cascade(3))
+        }
+        item(key = "containers") { ContainersSummary(state, Modifier.padding(horizontal = 16.dp).cascade(4), onContainers) }
     }
 }
 
@@ -264,6 +283,16 @@ private fun RadarSection(state: LiveState) {
             state.checks.filter { it.enabled }.map { RadarBlip("check:" + it.name, if (it.state == "down") "critical" else "ok") }
     }
     val colors = Vigie.status
+    // Retour haptique synchronisé avec le changement d'état du radar.
+    val haptics = rememberHaptics()
+    val previous = remember { arrayOfNulls<String>(1) }
+    LaunchedEffect(status) {
+        val before = previous[0]
+        if (before != null && before != status) {
+            if (status == "critical") haptics.reject() else if (status == "ok") haptics.confirm()
+        }
+        previous[0] = status
+    }
     val headline = when {
         ov == null && state.connection == Connection.Unauthorized -> "Token refusé"
         ov == null -> "Connexion…"

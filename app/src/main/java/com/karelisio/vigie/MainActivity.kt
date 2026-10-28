@@ -9,7 +9,11 @@ import android.view.animation.AnticipateInterpolator
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -92,7 +96,9 @@ private fun Root(prefs: UserPrefs, intent: Intent?, consumed: () -> Unit) {
     val snackbar = rememberSnackbar()
     val start = remember { if (prefs.onboardingDone && c.servers.active != null) HomeRoute else OnboardingRoute }
 
-    VigieNavHost(nav, start, snackbar)
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxSize()) {
+        VigieNavHost(nav, start, snackbar)
+    }
 
     // Liens profonds : QR « vigie://connect », notifications.
     LaunchedEffect(intent) {

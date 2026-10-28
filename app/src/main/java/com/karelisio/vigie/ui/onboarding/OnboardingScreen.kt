@@ -97,7 +97,7 @@ private val Pages: List<Page> = listOf(Page.Welcome, Page.Features, Page.Server)
 
 /** Premier lancement : présentation, connexion au serveur, puis autorisations une par une. */
 @Composable
-fun OnboardingScreen(nav: NavHostController) {
+fun OnboardingScreen(nav: NavHostController, entry: androidx.navigation.NavBackStackEntry) {
     val pager = rememberPagerState { Pages.size }
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
@@ -144,7 +144,7 @@ fun OnboardingScreen(nav: NavHostController) {
                 when (p) {
                     Page.Welcome -> WelcomePage(active = pager.currentPage == i)
                     Page.Features -> FeaturesPage(active = pager.currentPage == i)
-                    Page.Server -> ServerPage(nav, onSaved = { next() })
+                    Page.Server -> ServerPage(nav, entry, onSaved = { next() })
                     is Page.Permission -> PermissionPage(p.perm, perms.granted[p.perm] == true) { perms.request(p.perm) }
                     Page.Done -> DonePage(active = pager.currentPage == i)
                 }
@@ -220,7 +220,7 @@ private fun PageColumn(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun WelcomePage(active: Boolean) {
+internal fun WelcomePage(active: Boolean) {
     val blips = remember {
         listOf(
             RadarBlip("aiostreams", "ok"), RadarBlip("comet", "ok"), RadarBlip("jellyfin", "ok"),
@@ -228,22 +228,22 @@ private fun WelcomePage(active: Boolean) {
         )
     }
     PageColumn {
-        Radar("ok", blips, Modifier.fillMaxWidth(0.82f).cascade(0, active))
+        Radar("ok", blips, Modifier.fillMaxWidth(0.82f).cascade(0, always = true, run = active))
         Spacer(Modifier.height(32.dp))
-        Text("Vigie", style = MaterialTheme.typography.displayLargeEmphasized, modifier = Modifier.cascade(1, active))
+        Text("Vigie", style = MaterialTheme.typography.displayLargeEmphasized, modifier = Modifier.cascade(1, always = true, run = active))
         Spacer(Modifier.height(8.dp))
         Text(
             "Ton VPS, ses conteneurs et tes services Stremio, sous surveillance. En temps réel, depuis ta poche.",
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.cascade(2, active),
+            modifier = Modifier.cascade(2, always = true, run = active),
         )
     }
 }
 
 @Composable
-private fun FeaturesPage(active: Boolean) {
+internal fun FeaturesPage(active: Boolean) {
     val items = listOf(
         Triple(Icons.Rounded.Inventory2, "Conteneurs", "État, santé, CPU/RAM, logs en direct. Démarrer, arrêter, redémarrer d'un geste."),
         Triple(Icons.Rounded.MonitorHeart, "Services", "Vérifie chaque minute que tes addons répondent vraiment, avec l'historique de disponibilité."),
@@ -258,7 +258,7 @@ private fun FeaturesPage(active: Boolean) {
         Text("Tout voir, d'un coup d'œil", style = MaterialTheme.typography.headlineMediumEmphasized, textAlign = TextAlign.Center)
         Spacer(Modifier.height(24.dp))
         items.forEachIndexed { i, (icon, title, body) ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp).cascade(i + 1, active), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp).cascade(i + 1, always = true, run = active), verticalAlignment = Alignment.CenterVertically) {
                 Box(contentAlignment = Alignment.Center) {
                     Surface(
                         shape = shapes[i].toShape(),
@@ -283,11 +283,9 @@ private fun FeaturesPage(active: Boolean) {
 }
 
 @Composable
-private fun ServerPage(nav: NavHostController, onSaved: () -> Unit) {
+private fun ServerPage(nav: NavHostController, entry: androidx.navigation.NavBackStackEntry, onSaved: () -> Unit) {
     val scan = rememberScanLauncher(nav)
-    val handle = nav.currentBackStackEntry?.savedStateHandle
-    val scanned by (handle?.getStateFlow<String?>(SCAN_RESULT, null) ?: kotlinx.coroutines.flow.MutableStateFlow(null))
-        .collectAsStateWithLifecycle()
+    val scanned by entry.savedStateHandle.getStateFlow<String?>(SCAN_RESULT, null).collectAsStateWithLifecycle()
     var saved by rememberSaveable { mutableStateOf(false) }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
@@ -317,7 +315,7 @@ private fun ServerPage(nav: NavHostController, onSaved: () -> Unit) {
 }
 
 @Composable
-private fun PermissionPage(perm: Perm, granted: Boolean, onRequest: () -> Unit) {
+internal fun PermissionPage(perm: Perm, granted: Boolean, onRequest: () -> Unit) {
     val haptics = rememberHaptics()
     PageColumn {
         PermBadge(perm, granted, size = 140.dp)
@@ -341,24 +339,18 @@ private fun PermissionPage(perm: Perm, granted: Boolean, onRequest: () -> Unit) 
 }
 
 @Composable
-private fun DonePage(active: Boolean) {
+internal fun DonePage(active: Boolean) {
     PageColumn {
-        AnimatedContent(
-            active,
-            transitionSpec = { (slideInHorizontally { it / 3 } + fadeIn()) togetherWith (slideOutHorizontally() + fadeOut()) },
-            label = "done",
-        ) { _ ->
-            Radar("ok", emptyList(), Modifier.fillMaxWidth(0.7f))
-        }
+        Radar("ok", emptyList(), Modifier.fillMaxWidth(0.7f).cascade(0, always = true, run = active))
         Spacer(Modifier.height(32.dp))
-        Text("Tout est prêt", style = MaterialTheme.typography.displaySmallEmphasized, modifier = Modifier.cascade(0, active))
+        Text("Tout est prêt", style = MaterialTheme.typography.displaySmallEmphasized, modifier = Modifier.cascade(1, always = true, run = active))
         Spacer(Modifier.height(8.dp))
         Text(
             "Ajoute le widget sur ton écran d'accueil et la tuile Vigie dans tes réglages rapides pour garder un œil sur ton serveur.",
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.cascade(1, active),
+            modifier = Modifier.cascade(2, always = true, run = active),
         )
     }
 }

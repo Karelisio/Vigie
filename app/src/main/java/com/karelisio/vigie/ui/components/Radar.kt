@@ -93,6 +93,14 @@ fun Radar(
     }
     val pulse = rememberInfiniteTransition(label = "echo")
     val echo by pulse.animateFloat(0f, 1f, infiniteRepeatable(tween(1500, easing = LinearEasing)), label = "echoPhase")
+    // Onde qui part du centre : lente quand tout va bien, rapprochée en cas de problème.
+    val pingPeriod = when (status) {
+        "critical" -> 1600
+        "warning" -> 2400
+        else -> 3600
+    }
+    val pingTransition = rememberInfiniteTransition(label = "ping")
+    val ping by pingTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(pingPeriod, easing = LinearEasing)), label = "pingPhase")
     val positions = remember(blips) { blips.map { it to position(it.key) } }
     val ring = scheme.outlineVariant
     val surface = scheme.surfaceContainerLow
@@ -109,6 +117,10 @@ fun Radar(
             drawLine(ring.copy(alpha = 0.35f), Offset(c.x - r, c.y), Offset(c.x + r, c.y), 1.dp.toPx())
             drawLine(ring.copy(alpha = 0.35f), Offset(c.x, c.y - r), Offset(c.x, c.y + r), 1.dp.toPx())
             drawTicks(c, r, ring)
+            if (active && !reduced) {
+                val eased = 1f - (1f - ping) * (1f - ping)
+                drawCircle(color.copy(alpha = (1f - ping) * 0.32f), r * eased, c, style = Stroke((1.5f + 2f * (1f - ping)) * density))
+            }
 
             // Balayage : dégradé conique qui traîne derrière la ligne.
             rotate(angle, c) {

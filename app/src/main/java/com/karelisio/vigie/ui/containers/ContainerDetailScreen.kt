@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -246,7 +247,7 @@ fun ContainerDetailScreen(nav: NavHostController, route: ContainerRoute, vm: Con
 }
 
 @Composable
-private fun Header(c: Container?, route: ContainerRoute, onBack: () -> Unit) {
+internal fun Header(c: Container?, route: ContainerRoute, onBack: () -> Unit) {
     val status = Vigie.status
     val vs = c?.visualStatus() ?: "neutral"
     val color by animateColorAsState(status.of(vs), label = "hdr")
@@ -257,7 +258,7 @@ private fun Header(c: Container?, route: ContainerRoute, onBack: () -> Unit) {
         modifier = Modifier.fillMaxWidth().sharedBoundsOrSelf("card-${c?.id ?: route.id}"),
     ) {
         Column(Modifier.padding(bottom = 24.dp)) {
-            Row(Modifier.padding(top = 40.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.statusBarsPadding().padding(top = 4.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Retour") }
             }
             Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -295,7 +296,7 @@ private fun Header(c: Container?, route: ContainerRoute, onBack: () -> Unit) {
 }
 
 @Composable
-private fun Actions(c: Container, onAction: suspend (String) -> Unit) {
+internal fun Actions(c: Container, onAction: suspend (String) -> Unit) {
     val start = rememberActionRunner()
     val stop = rememberActionRunner()
     val restart = rememberActionRunner()
@@ -345,7 +346,7 @@ private fun Actions(c: Container, onAction: suspend (String) -> Unit) {
 }
 
 @Composable
-private fun StatsCard(c: Container, modifier: Modifier) {
+internal fun StatsCard(c: Container, modifier: Modifier) {
     SectionCard(modifier, title = "En ce moment") {
         Row(Modifier.fillMaxWidth()) {
             Stat("CPU", Fmt.pct(c.cpu, if (c.cpu < 10) 2 else 1), Modifier.weight(1f))

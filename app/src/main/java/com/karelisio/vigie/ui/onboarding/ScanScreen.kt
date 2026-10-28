@@ -60,6 +60,7 @@ import com.karelisio.vigie.ui.theme.Vigie
 import java.util.concurrent.Executors
 
 /** Scanner du QR code affiché par l'agent (CameraX + ML Kit, hors ligne). */
+@androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
 @Composable
 fun ScanScreen(nav: NavHostController) {
     val context = LocalContext.current

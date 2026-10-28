@@ -56,6 +56,7 @@ object Notifications {
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
     /** Affiche une alerte reçue de l'agent. */
+    @android.annotation.SuppressLint("MissingPermission") // vérifiée par canPost()
     fun showAlert(context: Context, data: Map<String, String>) {
         if (!canPost(context)) return
         val resolved = data["resolved"] == "true"

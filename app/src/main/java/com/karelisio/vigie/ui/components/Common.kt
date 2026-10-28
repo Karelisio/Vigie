@@ -75,12 +75,20 @@ fun SectionCard(
     }
 }
 
+/** Instant d'ouverture de l'écran courant (fourni par la navigation). */
+val LocalScreenOpenedAt = androidx.compose.runtime.compositionLocalOf { 0L }
+
+/** Vrai pendant la première seconde et demie d'un écran : les animations d'entrée y sont jouées. */
+@Composable
+fun screenJustOpened(): Boolean = android.os.SystemClock.uptimeMillis() - LocalScreenOpenedAt.current < 1500
+
 /** Apparition en cascade : chaque élément arrive avec un léger décalage selon son index. */
-fun Modifier.cascade(index: Int, key: Any? = Unit): Modifier = composed {
+fun Modifier.cascade(index: Int, key: Any? = Unit, always: Boolean = false, run: Boolean = true): Modifier = composed {
     val reduced = LocalReducedMotion.current
-    val p = remember(key) { Animatable(if (reduced) 1f else 0f) }
-    LaunchedEffect(key) {
-        if (!reduced && p.value < 1f) {
+    val fresh = always || screenJustOpened()
+    val p = remember(key) { Animatable(if (reduced || !fresh) 1f else 0f) }
+    LaunchedEffect(key, run) {
+        if (run && !reduced && p.value < 1f) {
             delay(minOf(index, 12) * 45L)
             p.animateTo(1f, Springs.gentle())
         }
