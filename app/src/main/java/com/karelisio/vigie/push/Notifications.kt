@@ -21,6 +21,7 @@ object Notifications {
     const val CHANNEL_RESOLVED = "alerts_resolved"
     const val CHANNEL_UPDATES = "updates"
     const val CHANNEL_UNREACHABLE = "server_unreachable"
+    const val CHANNEL_OPERATIONS = "operations"
     private const val GROUP = "vigie_alerts"
 
     const val EXTRA_CONTAINER = "container_id"
@@ -54,6 +55,13 @@ object Notifications {
                     description = "Quand ton téléphone n'arrive plus à joindre un serveur (l'agent ne peut alors plus prévenir)"
                     group = GROUP
                     enableVibration(true)
+                },
+                // Importance basse (pas minimale) : silencieux, mais compatible avec la mise en avant d'Android 16.
+                NotificationChannel(CHANNEL_OPERATIONS, "Opérations en cours", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Progression des mises à jour, nettoyages et sauvegardes, puis leur bilan"
+                    setSound(null, null)
+                    enableVibration(false)
+                    setShowBadge(false)
                 },
             ),
         )

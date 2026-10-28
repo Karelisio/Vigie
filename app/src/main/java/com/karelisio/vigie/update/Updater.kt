@@ -23,7 +23,7 @@ import java.io.File
 import java.io.IOException
 
 @Serializable
-private data class GhAsset(
+internal data class GhAsset(
     val name: String = "",
     val size: Long = 0,
     @SerialName("browser_download_url") val url: String = "",
@@ -83,7 +83,7 @@ class Updater(private val context: Context, http: OkHttpClient, private val pref
             VigieJson.decodeFromString<GhRelease>(r.body.string())
         }
         prefs.setLastUpdateCheck(now)
-        val apk = rel.assets.firstOrNull { it.name.endsWith(".apk") } ?: return null
+        val apk = phoneApk(rel.assets) ?: return null
         val version = rel.tag.removePrefix("v")
         if (!isNewer(version, currentVersion)) return null
         if (!force && version == p.skippedVersion) return null
@@ -109,7 +109,7 @@ class Updater(private val context: Context, http: OkHttpClient, private val pref
         if (_state.value !is UpdateState.Downloading && _state.value !is UpdateState.Installing) _state.value = UpdateState.Idle
     }
 
-    fun canInstall(): Boolean = Build.VERSION.SDK_INT < 26 || context.packageManager.canRequestPackageInstalls()
+    fun canInstall(): Boolean = context.packageManager.canRequestPackageInstalls()
 
     suspend fun downloadAndInstall(release: Release) {
         try {
@@ -187,6 +187,16 @@ class Updater(private val context: Context, http: OkHttpClient, private val pref
 
     companion object {
         private const val SIX_HOURS = 6 * 60 * 60 * 1000L
+        private val PHONE_APK = Regex("vigie-\\d+\\.\\d+\\.\\d+\\.apk", RegexOption.IGNORE_CASE)
+
+        /**
+         * APK du téléphone parmi les fichiers de la release (`vigie-X.Y.Z.apk`), jamais celui de la
+         * montre (`vigie-wear-X.Y.Z.apk`), qui ne s'installe pas sur un téléphone.
+         */
+        internal fun phoneApk(assets: List<GhAsset>): GhAsset? {
+            val apks = assets.filter { it.name.endsWith(".apk", ignoreCase = true) && !it.name.contains("wear", ignoreCase = true) }
+            return apks.firstOrNull { PHONE_APK.matches(it.name) } ?: apks.firstOrNull()
+        }
 
         /** Compare deux versions sémantiques (X.Y.Z, suffixes ignorés). */
         fun isNewer(candidate: String, current: String): Boolean {

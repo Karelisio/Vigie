@@ -1,6 +1,6 @@
 name: Release
 
-# Une version = un tag vX.Y.Z → APK signé + GitHub Release (changelog) + image de l'agent X.Y.Z et latest.
+# Une version = un tag vX.Y.Z → APK signés (téléphone et montre) + GitHub Release (changelog) + image de l'agent X.Y.Z et latest.
 # Trois façons de publier :
 #   - modifier le fichier VERSION (ex. 0.2.0) et pousser : le tag est créé ici s'il n'existe pas ;
 #   - créer une release / un tag vX.Y.Z sur GitHub ;
@@ -136,20 +136,25 @@ jobs:
             echo "::warning::GOOGLE_SERVICES_JSON_BASE64 absent : l'APK n'aura pas les notifications push."
           fi
 
-      - name: Compilation de l'APK signé
+      - name: Compilation des APK signés (téléphone et montre)
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          ./gradlew --no-daemon :app:assembleRelease
+          ./gradlew --no-daemon :app:assembleRelease :wear:assembleRelease
           mkdir -p dist
           cp app/build/outputs/apk/release/app-release.apk "dist/vigie-$VERSION_NAME.apk"
-          # Vérifie que l'APK est signé avec le keystore fourni (et non la clé de debug).
+          # Montre Wear OS : même identifiant et même clé que le téléphone (obligatoire pour la Data Layer).
+          cp wear/build/outputs/apk/release/wear-release.apk "dist/vigie-wear-$VERSION_NAME.apk"
+          # Vérifie que les APK sont signés avec le keystore fourni (et non la clé de debug), avec le même certificat.
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
           "$APKSIGNER" verify --print-certs "dist/vigie-$VERSION_NAME.apk" | tee cert.txt
-          if grep -q "CN=Android Debug" cert.txt; then echo "::error::APK signé avec la clé de debug"; exit 1; fi
+          "$APKSIGNER" verify --print-certs "dist/vigie-wear-$VERSION_NAME.apk" | tee cert-wear.txt
+          if grep -q "CN=Android Debug" cert.txt cert-wear.txt; then echo "::error::APK signé avec la clé de debug"; exit 1; fi
+          if [ "$(grep SHA-256 cert.txt)" != "$(grep SHA-256 cert-wear.txt)" ]; then echo "::error::Les APK du téléphone et de la montre n'ont pas la même signature"; exit 1; fi
           (cd dist && sha256sum "vigie-$VERSION_NAME.apk" > "vigie-$VERSION_NAME.apk.sha256")
+          (cd dist && sha256sum "vigie-wear-$VERSION_NAME.apk" > "vigie-wear-$VERSION_NAME.apk.sha256")
 
       - name: Changelog
         run: |
@@ -175,4 +180,6 @@ jobs:
           files: |
             dist/vigie-${{ env.VERSION_NAME }}.apk
             dist/vigie-${{ env.VERSION_NAME }}.apk.sha256
+            dist/vigie-wear-${{ env.VERSION_NAME }}.apk
+            dist/vigie-wear-${{ env.VERSION_NAME }}.apk.sha256
           make_latest: true

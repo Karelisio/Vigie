@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Progression des opérations appli fermée (service de premier plan, Live Update d'Android 16). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -106,6 +110,12 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/checks_widget_info" />
         </receiver>
+
+        <!-- Suivi d'une opération de l'agent : démarré pendant l'opération seulement. -->
+        <service
+            android:name=".ops.OperationService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <receiver
             android:name=".update.InstallReceiver"

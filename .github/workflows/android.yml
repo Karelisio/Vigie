@@ -5,6 +5,7 @@ on:
     branches: ["**"]
     paths:
       - "app/**"
+      - "wear/**"
       - "gradle/**"
       - "*.gradle.kts"
       - "gradle.properties"
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - "app/**"
+      - "wear/**"
       - "gradle/**"
       - "*.gradle.kts"
   workflow_dispatch:
@@ -43,10 +45,16 @@ jobs:
           fi
 
       - name: Compilation et tests
-        run: ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest
+        run: ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :wear:assembleDebug :wear:testDebugUnitTest
 
       - uses: actions/upload-artifact@v4
         with:
           name: vigie-debug
           path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vigie-wear-debug
+          path: wear/build/outputs/apk/debug/*.apk
           retention-days: 7

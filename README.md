@@ -4,6 +4,7 @@ Surveille et pilote ton VPS depuis ton téléphone.
 
 - **Agent** (`/agent`) : petit service Go (~12 Mo, ~10 Mo de RAM) qui lit les métriques de l'hôte, suit les conteneurs Docker, exécute des checks HTTP, garde 7 jours d'historique (SQLite) et envoie des alertes push (FCM).
 - **Appli** (`/app`) : appli Android native Material You (Kotlin, Jetpack Compose).
+- **Montre** (`/wear`) : appli Wear OS (tuile, complication, écran d'état), configurée depuis le téléphone.
 
 Tout se déploie **sans SSH** : un `docker-compose` collé dans Dockhand, une ressource Pangolin, un QR code à scanner.
 
@@ -124,8 +125,8 @@ Au choix :
 
 GitHub Actions :
 - construit l'image de l'agent `X.Y.Z` + `latest` ;
-- compile l'APK signé (`versionCode` = numéro d'exécution du workflow) ;
-- publie la release avec l'APK et le changelog (section `## [X.Y.Z]` de [`CHANGELOG.md`](CHANGELOG.md), sinon la liste des commits).
+- compile les APK signés du téléphone et de la montre, avec la même clé (`versionCode` = numéro d'exécution du workflow) ;
+- publie la release avec `vigie-X.Y.Z.apk`, `vigie-wear-X.Y.Z.apk` (et leurs `.sha256`) et le changelog (section `## [X.Y.Z]` de [`CHANGELOG.md`](CHANGELOG.md), sinon la liste des commits).
 
 L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et propose la mise à jour.
 
@@ -141,6 +142,7 @@ L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et p
 - **Oracle Always Free** : carte de risque de récupération pour inactivité (CPU, réseau, mémoire sous 20 % sur 7 jours) et alerte.
 - **Verrouillage** par empreinte, à l'ouverture ou seulement pour les actions (Réglages → Verrouillage).
 - **Mises à jour depuis l'appli** : bouton « Mettre à jour » sur un conteneur, une stack entière (vue « par stack ») ou toutes les images d'un coup, téléchargement seul, et mise à jour de l'agent lui-même (Réglages). Le conteneur est recréé à l'identique (nom, réseaux, volumes, labels compose : Dockhand le voit toujours dans sa stack), avec retour automatique à l'ancienne version s'il ne démarre pas. Progression en direct, notification à la fin si l'appli est fermée.
+- **Progression en direct dans les notifications** : une opération lancée depuis l'appli (mise à jour d'un conteneur ou d'une stack, tout mettre à jour, nettoyage, sauvegarde, mise à jour de l'agent…), ou encore en cours quand tu quittes l'appli, est suivie dans une notification qui reste à jour appli fermée, puis laisse place au bilan (réussite ou échec, détail par conteneur). Sur Android 16 : barre découpée par étape ou par conteneur, échecs marqués, et mise en avant « Live Update » (pourcentage dans la barre d'état).
 - **Mises à jour automatiques la nuit** pour les conteneurs choisis (Réglages → Mises à jour automatiques ou interrupteur dans la fiche), avec retour arrière et résumé au réveil ; **nouveautés** (notes de version GitHub) affichées avant de mettre à jour.
 - **Réparation automatique** des conteneurs choisis (Réglages → Réparation automatique ou interrupteur dans la fiche) : redémarrage après quelques minutes de healthcheck en échec, relance après un plantage, 3 fois par heure au plus, puis alerte.
 - **Mode maintenance** : notifications coupées 30 min à 4 h depuis l'accueil (icône outils) ou la tuile « Maintenance », bilan à la fin.
@@ -163,10 +165,43 @@ L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et p
 - **Ports ouverts** (Réglages → Sécurité du serveur) : ce qui écoute sur Internet ou seulement sur le serveur, rattaché au conteneur qui le publie ; badges Pangolin, autorisé et « contourne Pangolin » ; alerte quand un nouveau port s'ouvre sur Internet ; test depuis le téléphone pour voir ce qui est vraiment joignable malgré le pare-feu d'Oracle.
 - **Connexions SSH** (Réglages → Sécurité du serveur) : échecs sur 24 h et 7 jours, adresses les plus insistantes avec leur pays, utilisateurs essayés, bannissements fail2ban et connexions réussies, avec une alerte à chaque connexion (avertissement depuis une nouvelle adresse). Demande un groupe en plus dans le compose (voir [plus bas](#connexions-ssh)).
 - **Deux widgets** (serveur, services) redimensionnables aux couleurs du système, **tuile** de réglages rapides, **raccourcis** Conteneurs/Services, **mode hors ligne** avec l'heure de la dernière mise à jour.
+- **Montre Wear OS** : tuile, complication et petite appli avec l'état global, CPU/RAM/disque et les problèmes en cours ; accès dédié en lecture seule envoyé depuis le téléphone (Réglages → Montre, voir [plus bas](#montre-wear-os)).
 - Plusieurs serveurs possibles (nom, URL, token), tokens chiffrés sur le téléphone (EncryptedSharedPreferences).
 - Respecte le réglage système « Supprimer les animations ».
 
 Captures d'écran : `./gradlew :app:recordRoborazziDebug` (rendu dans `app/build/outputs/roborazzi/`).
+
+## Montre (Wear OS)
+
+Pour les montres Wear OS 3 et plus : un écran d'état (serveur, état global coloré, CPU/RAM/disque, conteneurs et services en défaut, heure de mise à jour, bouton « Actualiser »), une **tuile** (état, métriques, nombre de problèmes ; un appui ouvre l'appli) et une **complication** pour le cadran (« OK » ou le nombre de problèmes). La montre interroge l'agent elle-même (`/api/v1/overview` et `/api/v1/system`), en Wi-Fi, en LTE ou par le Bluetooth du téléphone : la tuile se rafraîchit environ toutes les 15 min, et à chaque ouverture de l'appli.
+
+### Installer l'appli sur la montre
+
+L'APK `vigie-wear-X.Y.Z.apk` est joint à chaque [release](https://github.com/Karelisio/Vigie/releases/latest). Il est signé avec la même clé que l'appli du téléphone, ce qui est obligatoire pour qu'elles se parlent : prends toujours la **même version** que celle du téléphone. Il s'installe depuis un ordinateur avec `adb` ([Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)) :
+
+1. Sur la montre : **Paramètres › Système › À propos › Versions**, touche 7 fois **Numéro de build** pour activer les options pour les développeurs.
+2. **Paramètres › Options pour les développeurs** : active **Débogage ADB**, puis **Déboguer via Wi-Fi** (montre et ordinateur sur le même réseau Wi-Fi). L'adresse `IP:port` de la montre s'affiche dessous.
+3. **Déboguer via Wi-Fi › Associer un nouvel appareil** : la montre affiche un code à 6 chiffres et une adresse d'association. Sur l'ordinateur :
+   ```
+   adb pair 192.168.1.42:37415      # adresse d'association, puis le code affiché
+   adb connect 192.168.1.42:41235   # adresse affichée sous « Déboguer via Wi-Fi »
+   adb devices                      # la montre doit apparaître
+   ```
+4. Installe l'APK :
+   ```
+   adb install vigie-wear-0.6.0.apk
+   ```
+   Pour une nouvelle version, même commande avec `-r` (`adb install -r vigie-wear-X.Y.Z.apk`) : l'appli de la montre ne se met pas à jour toute seule.
+5. Désactive ensuite **Débogage ADB** sur la montre (autonomie).
+
+### Configurer depuis le téléphone
+
+1. Vigie › **Réglages › Montre** : l'écran indique si une montre est connectée et si Vigie y est installée.
+2. Laisse **Accès dédié en lecture seule** activé (recommandé, agent 0.5 ou plus) : l'appli crée un accès partagé « Montre » et c'est lui que reçoit la montre, pas ton token principal. Il apparaît dans **Réglages › Accès partagés**, où tu peux le révoquer ; un nouvel envoi remplace (et révoque) le précédent.
+3. Touche **Envoyer à la montre**. Le nom, l'URL et le token du serveur actif passent par la Data Layer de Wear OS (seulement entre applis de même identifiant et de même signature, sans être conservés par les services Google), puis sont chiffrés sur la montre avec une clé de l'Android Keystore.
+4. Sur la montre : ajoute la tuile **Vigie** (balaye le cadran, puis « + ») ou la complication **État du serveur** sur ton cadran.
+
+En cas de souci, la montre l'affiche clairement : « Montre hors connexion », « Serveur injoignable » ou « Accès refusé » (accès révoqué : renvoie-le depuis le téléphone). La montre suit le serveur actif au moment de l'envoi ; pour en changer, choisis l'autre serveur dans l'appli, puis renvoie l'accès. « Retirer l'accès » efface l'accès de la montre et révoque son accès dédié.
 
 ## Sauvegardes
 

@@ -59,6 +59,7 @@ class VigieApp : Application() {
         })
         container.surfaces.schedulePeriodic()
         container.watch.schedule()
+        com.karelisio.vigie.ops.OperationService.watch(this, container.repository, container.scope)
         container.scope.launch { container.push.syncToken() }
     }
 

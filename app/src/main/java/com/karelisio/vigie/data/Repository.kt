@@ -43,6 +43,9 @@ class Repository(
     private val sessions = mutableMapOf<String, LiveSession>()
     private val _foreground = MutableStateFlow(false)
 
+    /** Connexion gardée en arrière-plan pendant le suivi d'une opération (service de premier plan). */
+    private val _held = MutableStateFlow(false)
+
     private val activeSession: StateFlow<LiveSession?> = servers.activeId
         .map { id -> id?.let { servers.get(it) }?.let { sessionFor(it) } }
         .stateIn(scope, SharingStarted.Eagerly, servers.active?.let { sessionFor(it) })
@@ -59,7 +62,7 @@ class Repository(
         scope.launch {
             activeSession.collect { session ->
                 sessions.values.filter { it !== session }.forEach { it.stop() }
-                if (_foreground.value) session?.start()
+                if (_foreground.value || _held.value) session?.start()
             }
         }
     }
@@ -80,7 +83,14 @@ class Repository(
     fun setForeground(fg: Boolean) {
         _foreground.value = fg
         val s = activeSession.value ?: return
-        if (fg) s.start() else s.stop()
+        if (fg || _held.value) s.start() else s.stop()
+    }
+
+    /** Garde (ou libère) la connexion en direct quand l'appli est en arrière-plan. */
+    fun hold(on: Boolean) {
+        _held.value = on
+        val s = activeSession.value ?: return
+        if (on || _foreground.value) s.start() else s.stop()
     }
 
     fun reconnect() = activeSession.value?.reconnect()
@@ -271,6 +281,17 @@ class Repository(
     }
 
     suspend fun updateAgent(): AgentJob = started(api.postEmpty(requireServer(), "/api/v1/agent/update"))
+
+    /**
+     * Opération en cours puis les plus récentes, selon l'agent. Met à jour celles que l'appli croit
+     * encore en cours (fin manquée pendant une coupure de connexion).
+     */
+    suspend fun jobs(): List<AgentJob> {
+        val list: List<AgentJob> = api.get(requireServer(), "/api/v1/jobs")
+        val running = live.value.jobs.filter { !it.done }.map { it.id }.toSet()
+        list.filter { it.id in running }.forEach { activeSession.value?.patchJob(it) }
+        return list
+    }
 
     /** Notes de version GitHub de l'image du conteneur (agent 0.4.0 et plus). */
     suspend fun changelog(id: String): ImageChangelog = api.get(requireServer(), "/api/v1/containers/$id/changelog")

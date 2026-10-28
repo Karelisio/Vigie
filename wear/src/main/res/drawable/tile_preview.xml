@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Aperçu de la tuile dans le sélecteur de tuiles : anneau d'état et trois jauges. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="192dp" android:height="192dp" android:viewportWidth="192" android:viewportHeight="192">
+    <path android:pathData="M96,0 A96,96 0 1,1 95.99,0 Z" android:fillColor="#FF000000" />
+    <path android:pathData="M96,14 A82,82 0 1,1 95.99,14 Z" android:strokeColor="#FF2E7D32" android:strokeWidth="6" android:fillColor="#00000000" />
+    <path android:pathData="M96,52 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0" android:fillColor="#FF66BB6A" />
+    <path android:pathData="M56,92 h80" android:strokeColor="#FF33424B" android:strokeWidth="8" android:strokeLineCap="round" />
+    <path android:pathData="M56,92 h30" android:strokeColor="#FF4DD0E1" android:strokeWidth="8" android:strokeLineCap="round" />
+    <path android:pathData="M56,112 h80" android:strokeColor="#FF33424B" android:strokeWidth="8" android:strokeLineCap="round" />
+    <path android:pathData="M56,112 h48" android:strokeColor="#FF4DD0E1" android:strokeWidth="8" android:strokeLineCap="round" />
+    <path android:pathData="M56,132 h80" android:strokeColor="#FF33424B" android:strokeWidth="8" android:strokeLineCap="round" />
+    <path android:pathData="M56,132 h62" android:strokeColor="#FF4DD0E1" android:strokeWidth="8" android:strokeLineCap="round" />
+    <path android:pathData="M70,160 h52" android:strokeColor="#FF4DD0E1" android:strokeWidth="14" android:strokeLineCap="round" />
+</vector>

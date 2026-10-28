@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Vigie"
 include(":app")
+include(":wear")

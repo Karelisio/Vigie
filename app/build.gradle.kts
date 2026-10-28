@@ -138,6 +138,10 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.vico.compose.m3)
 
+    // Montre Wear OS : envoi de l'accès par la Data Layer.
+    implementation(libs.play.services.wearable)
+    implementation(libs.kotlinx.coroutines.play.services)
+
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi)
