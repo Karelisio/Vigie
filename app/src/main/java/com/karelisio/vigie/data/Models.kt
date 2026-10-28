@@ -1,0 +1,283 @@
+package com.karelisio.vigie.data
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class Disk(
+    val mount: String = "/",
+    val total: Long = 0,
+    val used: Long = 0,
+    val pct: Double = 0.0,
+)
+
+@Serializable
+data class SystemSnapshot(
+    val ts: Long = 0,
+    val cpu: Double = 0.0,
+    @SerialName("cpu_steal") val cpuSteal: Double = 0.0,
+    val iowait: Double = 0.0,
+    val cores: List<Double> = emptyList(),
+    @SerialName("num_cpu") val numCpu: Int = 0,
+    @SerialName("mem_total") val memTotal: Long = 0,
+    @SerialName("mem_used") val memUsed: Long = 0,
+    val mem: Double = 0.0,
+    @SerialName("swap_total") val swapTotal: Long = 0,
+    @SerialName("swap_used") val swapUsed: Long = 0,
+    @SerialName("disk_total") val diskTotal: Long = 0,
+    @SerialName("disk_used") val diskUsed: Long = 0,
+    val disk: Double = 0.0,
+    val disks: List<Disk> = emptyList(),
+    @SerialName("net_rx") val netRx: Double = 0.0,
+    @SerialName("net_tx") val netTx: Double = 0.0,
+    @SerialName("net_rx_total") val netRxTotal: Long = 0,
+    @SerialName("net_tx_total") val netTxTotal: Long = 0,
+    val load1: Double = 0.0,
+    val load5: Double = 0.0,
+    val load15: Double = 0.0,
+    val uptime: Long = 0,
+    val temp: Double? = null,
+    val procs: Int = 0,
+)
+
+@Serializable
+data class Container(
+    val id: String,
+    val name: String,
+    val image: String = "",
+    val state: String = "",
+    val status: String = "",
+    val health: String = "",
+    val cpu: Double = 0.0,
+    @SerialName("mem_used") val memUsed: Long = 0,
+    @SerialName("mem_limit") val memLimit: Long = 0,
+    val mem: Double = 0.0,
+    @SerialName("net_rx") val netRx: Double = 0.0,
+    @SerialName("net_tx") val netTx: Double = 0.0,
+    val pids: Long = 0,
+    val created: Long = 0,
+    @SerialName("started_at") val startedAt: Long = 0,
+    @SerialName("finished_at") val finishedAt: Long = 0,
+    @SerialName("exit_code") val exitCode: Int = 0,
+    @SerialName("oom_killed") val oomKilled: Boolean = false,
+    @SerialName("restart_count") val restartCount: Int = 0,
+    @SerialName("restart_policy") val restartPolicy: String = "",
+    val project: String = "",
+    val service: String = "",
+    val ports: List<String> = emptyList(),
+    val problem: String = "",
+    val ignored: Boolean = false,
+    val self: Boolean = false,
+    @SerialName("stopped_by_user") val stoppedByUser: Boolean = false,
+) {
+    val running get() = state == "running"
+    val hasProblem get() = problem.isNotEmpty()
+    val shortImage get() = image.substringAfterLast('/').ifEmpty { image }
+}
+
+@Serializable
+data class Issue(
+    val kind: String = "",
+    val severity: String = "",
+    val target: String = "",
+    val id: String? = null,
+    val message: String = "",
+)
+
+@Serializable
+data class Counts(
+    val total: Int = 0,
+    val running: Int = 0,
+    val stopped: Int = 0,
+    val problems: Int = 0,
+)
+
+@Serializable
+data class CheckCounts(val total: Int = 0, val up: Int = 0, val down: Int = 0)
+
+@Serializable
+data class Overview(
+    val status: String = "ok",
+    val issues: List<Issue> = emptyList(),
+    val system: SystemSnapshot? = null,
+    val containers: Counts = Counts(),
+    val checks: CheckCounts = CheckCounts(),
+    val server: String = "",
+    @SerialName("updated_at") val updatedAt: Long = 0,
+)
+
+@Serializable
+data class Thresholds(val cpu: Double = 90.0, val ram: Double = 90.0, val disk: Double = 90.0)
+
+@Serializable
+data class CheckResult(
+    val ts: Long = 0,
+    val ok: Boolean = false,
+    val status: Int = 0,
+    @SerialName("latency_ms") val latencyMs: Long = 0,
+    val error: String? = null,
+)
+
+@Serializable
+data class CheckStatus(
+    val id: Long,
+    val name: String,
+    val url: String,
+    @SerialName("expected_status") val expectedStatus: Int = 200,
+    val keyword: String = "",
+    @SerialName("interval_sec") val intervalSec: Int = 60,
+    @SerialName("timeout_ms") val timeoutMs: Int = 10000,
+    val enabled: Boolean = true,
+    val position: Int = 0,
+    val state: String = "pending",
+    val last: CheckResult? = null,
+    @SerialName("uptime_24h") val uptime24h: Double = -1.0,
+    @SerialName("uptime_7d") val uptime7d: Double = -1.0,
+    @SerialName("latency_24h") val latency24h: Double = 0.0,
+    @SerialName("consecutive_failures") val consecutiveFailures: Int = 0,
+    val recent: List<CheckResult> = emptyList(),
+)
+
+@Serializable
+data class CheckInput(
+    val name: String,
+    val url: String,
+    @SerialName("expected_status") val expectedStatus: Int = 200,
+    val keyword: String = "",
+    @SerialName("interval_sec") val intervalSec: Int = 60,
+    @SerialName("timeout_ms") val timeoutMs: Int = 10000,
+    val enabled: Boolean = true,
+)
+
+@Serializable
+data class UptimeBucket(val ts: Long = 0, val total: Int = 0, val ok: Int = 0, val latency: Double? = null)
+
+@Serializable
+data class CheckHistory(
+    val buckets: List<UptimeBucket> = emptyList(),
+    val uptime: Double = -1.0,
+    val latency: Double = 0.0,
+)
+
+@Serializable
+data class SysPoint(
+    val ts: Long = 0,
+    val cpu: Double = 0.0,
+    val mem: Double = 0.0,
+    val disk: Double = 0.0,
+    val rx: Double = 0.0,
+    val tx: Double = 0.0,
+    val load1: Double = 0.0,
+    val temp: Double? = null,
+)
+
+@Serializable
+data class CtrPoint(
+    val ts: Long = 0,
+    val cpu: Double = 0.0,
+    val mem: Double = 0.0,
+    @SerialName("mem_bytes") val memBytes: Long = 0,
+)
+
+@Serializable
+data class History<T>(@SerialName("bucket_ms") val bucketMs: Long = 0, val points: List<T> = emptyList())
+
+@Serializable
+data class LogLine(val ts: Long = 0, val stream: String = "stdout", val line: String = "")
+
+@Serializable
+data class LogsResponse(val lines: List<LogLine> = emptyList())
+
+@Serializable
+data class HealthInfo(
+    val status: String = "",
+    @SerialName("failing_streak") val failingStreak: Int = 0,
+    @SerialName("last_output") val lastOutput: String? = null,
+    @SerialName("last_exit_code") val lastExitCode: Int? = null,
+)
+
+@Serializable
+data class MountInfo(val type: String = "", val source: String = "", val destination: String = "", val rw: Boolean = true)
+
+@Serializable
+data class ContainerDetail(
+    val container: Container,
+    val networks: Map<String, String> = emptyMap(),
+    val mounts: List<MountInfo> = emptyList(),
+    @SerialName("image_id") val imageId: String = "",
+    val error: String = "",
+    val health: HealthInfo? = null,
+    @SerialName("cpu_limit") val cpuLimit: Double? = null,
+)
+
+@Serializable
+data class ActionResult(val ok: Boolean = false, val state: String = "")
+
+@Serializable
+data class HostInfo(
+    val hostname: String = "",
+    val kernel: String = "",
+    val os: String = "",
+    val arch: String = "",
+    @SerialName("num_cpu") val numCpu: Int = 0,
+    @SerialName("cpu_model") val cpuModel: String = "",
+)
+
+@Serializable
+data class DockerVersion(
+    @SerialName("Version") val version: String = "",
+    @SerialName("ApiVersion") val apiVersion: String = "",
+)
+
+@Serializable
+data class ServerInfo(
+    val name: String = "",
+    val version: String = "",
+    val host: HostInfo = HostInfo(),
+    val docker: DockerVersion? = null,
+    @SerialName("agent_started") val agentStarted: Long = 0,
+    val thresholds: Thresholds = Thresholds(),
+    @SerialName("push_enabled") val pushEnabled: Boolean = false,
+    @SerialName("public_url") val publicUrl: String = "",
+)
+
+@Serializable
+data class Alert(
+    val id: Long = 0,
+    val ts: Long = 0,
+    val kind: String = "",
+    val severity: String = "",
+    val target: String = "",
+    val title: String = "",
+    val body: String = "",
+    val resolved: Boolean = false,
+)
+
+@Serializable
+data class AuditEntry(
+    val id: Long = 0,
+    val ts: Long = 0,
+    val ip: String = "",
+    val action: String = "",
+    val target: String = "",
+    val result: String = "",
+    val ua: String = "",
+)
+
+@Serializable
+data class DockerEvent(
+    val action: String = "",
+    val id: String = "",
+    val name: String = "",
+    val ts: Long = 0,
+    @SerialName("exit_code") val exitCode: String? = null,
+)
+
+@Serializable
+data class Hello(val name: String = "", val version: String = "", val thresholds: Thresholds = Thresholds())
+
+@Serializable
+data class DeviceRegistration(val token: String, val name: String)
+
+@Serializable
+data class PushTest(val token: String? = null)

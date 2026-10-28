@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Balayage radar (secteur supérieur droit) -->
+    <path android:pathData="M54,54 L54,24 A30,30 0 0,1 80,39 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="sweep" android:centerX="54" android:centerY="54"
+                android:startColor="#00FFFFFF" android:centerColor="#00FFFFFF" android:endColor="#66FFFFFF" />
+        </aapt:attr>
+    </path>
+    <path android:pathData="M54,54 L80,39" android:strokeColor="#CCFFFFFF" android:strokeWidth="1.6" android:strokeLineCap="round" />
+    <!-- Anneaux -->
+    <path android:pathData="M54,24 A30,30 0 1,1 53.99,24 Z" android:strokeColor="#73FFFFFF" android:strokeWidth="2.2" android:fillColor="#00000000" />
+    <path android:pathData="M54,36 A18,18 0 1,1 53.99,36 Z" android:strokeColor="#40FFFFFF" android:strokeWidth="1.6" android:fillColor="#00000000" />
+    <!-- Écho -->
+    <path android:pathData="M76.4,44 m-2.6,0 a2.6,2.6 0 1,0 5.2,0 a2.6,2.6 0 1,0 -5.2,0" android:fillColor="#FFFFFFFF" />
+    <path android:pathData="M76.4,44 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" android:strokeColor="#59FFFFFF" android:strokeWidth="1.2" android:fillColor="#00000000" />
+    <!-- Tour -->
+    <path android:fillType="evenOdd" android:fillColor="#FFFFFFFF" android:pathData="M54,28.5 L66,37.5 L42,37.5 Z M44.5,37.5 L63.5,37.5 L63.5,46 L44.5,46 Z M48.5,39.6 L48.5,43.8 L59.5,43.8 L59.5,39.6 Z M41.5,46 L66.5,46 L66.5,49.2 L41.5,49.2 Z M46.2,49.2 L49.6,49.2 L44.6,80.5 L40.4,80.5 Z M58.4,49.2 L61.8,49.2 L67.6,80.5 L63.4,80.5 Z M38.5,79.5 L69.5,79.5 L69.5,82 L38.5,82 Z" />
+    <path android:pathData="M47.6,57 L61,69.5 M60.4,57 L47,69.5 M46.6,63.4 L61.4,63.4 M45.6,70 L62.4,70" android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round" />
+</vector>
