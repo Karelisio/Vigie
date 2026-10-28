@@ -50,6 +50,8 @@ services:
       - vigie-data:/data
     networks:
       - arr_backend
+      # Réseau de Pangolin (gerbil/traefik) : permet à Pangolin de joindre « vigie-agent:8080 ».
+      - pangolin_frontend
     read_only: true
     tmpfs:
       - /tmp
@@ -67,6 +69,8 @@ services:
 
 networks:
   arr_backend:
+    external: true
+  pangolin_frontend:
     external: true
 
 volumes:

@@ -38,7 +38,7 @@ GitHub Actions construit l'image `ghcr.io/karelisio/vigie-agent` (amd64 + arm64)
    - `VIGIE_TOKEN` : laisse vide, un token aléatoire est généré.
 4. **Déployer**.
 
-Le réseau `arr_backend` doit déjà exister (c'est celui de tes autres services). L'agent n'expose aucun port sur l'hôte : seul Pangolin y accède, via ce réseau.
+Les réseaux `arr_backend` (tes services, pour les checks internes) et `pangolin_frontend` (celui de gerbil/traefik, pour que Pangolin joigne l'agent) doivent déjà exister. L'agent n'expose aucun port sur l'hôte : seul Pangolin y accède, via ce réseau.
 
 Ce que monte le compose, et pourquoi :
 
