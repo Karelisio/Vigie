@@ -59,7 +59,10 @@ Chaque conteneur porte aussi `image_ref`, `update_available` (nouvelle image pub
 | POST | `/api/v1/updates/apply` | met à jour tous les conteneurs qui ont une nouvelle image (202 : `job`) |
 | POST | `/api/v1/agent/update` | met à jour l'agent (202 : `job`) |
 | GET | `/api/v1/jobs` | opération en cours puis les 20 dernières : `id, kind, action, target, phase, progress, message, done, ok, error, results[]` |
-| GET / PUT | `/api/v1/settings` | `{cpu, ram, disk, duration_min, quiet_enabled, quiet_start, quiet_end, muted[], image_updates, oracle_watch, cert_days, prune_images}` (champs absents : valeur actuelle conservée) |
+| GET / PUT | `/api/v1/settings` | `{cpu, ram, disk, duration_min, quiet_enabled, quiet_start, quiet_end, muted[], image_updates, oracle_watch, cert_days, prune_images, auto_update, auto_update_time, auto_update_all, auto_update_list[], auto_update_agent, net_quota_tb, net_quota_alert, maintenance_until, log_rules[], weekly_report}` (champs absents : valeur actuelle conservée) |
+| POST | `/api/v1/maintenance` | `{minutes}` (0 à 1440, 0 : fin) : aucune notification jusqu'à `maintenance_until`, puis un bilan des alertes survenues ; renvoie les réglages |
+| GET | `/api/v1/cleanup` | espace récupérable : `images, volumes, build_cache` (`count, size`), `volumes_supported` (Docker ≥ 23) |
+| POST | `/api/v1/cleanup` | `{images, volumes, build_cache}` : supprime les images sans conteneur, les volumes anonymes orphelins (jamais les volumes nommés), le cache de construction (202 : `job`) |
 | GET | `/api/v1/oracle` | risque de récupération Oracle Always Free : `applicable, risk (low/medium/high/unknown), days, cpu, mem, net, net_mbps, summary` |
 | GET | `/api/v1/images` | dernier résultat de la vérification des images, par conteneur |
 | POST | `/api/v1/images/check` | interroge les registres maintenant |
@@ -71,7 +74,7 @@ Quota de trafic (`net_quota_tb`, `net_quota_alert`) : alerte `traffic` au seuil 
 
 ## Temps réel
 
-`WS /api/v1/ws` envoie à la connexion `hello`, `overview`, `system`, `containers`, `checks`, puis :
+`WS /api/v1/ws` envoie à la connexion `hello`, `overview`, `system`, `containers`, `checks`, `settings` (et l'opération en cours éventuelle), puis :
 
 | `type` | Fréquence |
 | --- | --- |

@@ -2,6 +2,19 @@
 
 Le workflow de release publie la section correspondant au tag (`## [X.Y.Z]`).
 
+## [0.4.0]
+
+- Mises à jour automatiques la nuit, à l'heure choisie, pour tous les conteneurs ou une sélection (agent compris en option) ; retour arrière si un conteneur ne démarre pas, résumé au réveil.
+- Nouveautés avant une mise à jour : notes de version GitHub de l'image, les versions plus récentes mises en avant.
+- Mode maintenance : notifications coupées 30 min à 4 h (accueil ou tuile de réglages rapides), bilan des alertes à la fin.
+- Nettoyage du disque : images inutilisées, cache de construction, volumes anonymes orphelins, avec estimation avant confirmation.
+- Trafic du mois : quota sortant (10 To pour Oracle Always Free), projection de fin de mois, historique, alerte à 80 % puis à 100 %.
+- Top consommateurs : CPU, mémoire et réseau des conteneurs sur 24 h ou 7 jours.
+- Rapport hebdomadaire le dimanche à 19 h : disponibilité, incidents, plantages, mises à jour, disque, trafic.
+- Alertes sur les logs : texte ou expression régulière, par conteneur, 15 min entre deux alertes avec le nombre d'occurrences.
+- Services : mode « Addon Stremio » qui vérifie la présence de liens pour un film témoin (préréglages AIOStreams et Comet).
+- Agent : à mettre à jour depuis l'appli (Réglages → Mettre à jour l'agent) pour profiter de ces nouveautés.
+
 ## [0.3.0]
 
 - Mises à jour depuis l'appli, sans passer par Dockhand : bouton « Mettre à jour » dans la fiche d'un conteneur, téléchargement seul de l'image, « Tout mettre à jour » dans le filtre Mises à jour.

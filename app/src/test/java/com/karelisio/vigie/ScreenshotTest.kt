@@ -264,6 +264,13 @@ class ScreenshotTest {
         }
     }
 
+    @Test
+    fun maintenance() = shot("maintenance") {
+        Column(Modifier.padding(16.dp)) {
+            com.karelisio.vigie.ui.home.MaintenanceBanner(now + 42 * 60_000L, onStop = {})
+        }
+    }
+
     @Test fun lockScreen() = shot("lock", dark = true) { com.karelisio.vigie.security.LockScreen(visible = true) {} }
 
     @Test fun onboardingWelcome() = shot("onboarding_welcome") { WelcomePage(active = true) }
