@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/karelisio/vigie/agent/internal/channels"
 	"github.com/karelisio/vigie/agent/internal/checks"
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/docker"
@@ -30,6 +31,9 @@ type Engine struct {
 	fcm *FCM
 	log *slog.Logger
 	ctx context.Context
+
+	// Channels relaie les notifications vers Telegram, Discord et ntfy (même sans Firebase).
+	Channels *channels.Manager
 
 	mu       sync.Mutex
 	over     map[string]time.Time // métrique → début du dépassement
@@ -53,6 +57,7 @@ func New(ctx context.Context, cfg *config.Config, mon *monitor.Monitor, dk *dock
 		starts:   map[string][]time.Time{},
 		killed:   map[string]time.Time{},
 		set:      mon.Settings(),
+		Channels: channels.New(ctx, st, log, cfg.ServerName),
 	}
 	if len(cfg.FCMServiceAccount) > 0 {
 		f, err := NewFCM(cfg.FCMServiceAccount)
@@ -399,6 +404,9 @@ func (e *Engine) dispatch(n Notification, resolved, push bool) {
 	}
 	e.log.Info("alerte", "titre", n.Title, "détail", n.Body, "résolue", resolved, "push", push && e.fcm != nil)
 	e.mon.Broadcast("alert", a)
+	if push {
+		e.Channels.Notify(channels.Message{Severity: n.Severity, Resolved: resolved, Title: n.Title, Body: n.Body, TS: time.UnixMilli(a.TS)})
+	}
 	if !push || e.fcm == nil {
 		return
 	}

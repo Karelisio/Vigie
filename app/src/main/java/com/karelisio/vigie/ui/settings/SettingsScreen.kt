@@ -29,6 +29,8 @@ import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.Healing
+import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material.icons.rounded.Visibility
@@ -229,6 +231,13 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
                 scope.launch { snackbar.showSnackbar(vm.testPush()) }
             }
         }
+        if (versionAtLeast(live.agentVersion, 0, 5) && !live.readOnly) {
+            item {
+                Row_(Icons.Rounded.Forum, "Canaux d'alerte", "Telegram, Discord ou ntfy, en plus des notifications") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.ChannelsRoute)
+                }
+            }
+        }
         item { Section("Apparence") }
         item {
             ToggleRow(
@@ -247,6 +256,13 @@ fun SettingsScreen(nav: NavHostController, vm: SettingsViewModel = viewModel()) 
             item {
                 Row_(Icons.Rounded.Tune, "Alertes et seuils", "Seuils, heures calmes, certificats, sourdine") {
                     nav.navigate(com.karelisio.vigie.ui.navigation.AlertSettingsRoute)
+                }
+            }
+        }
+        if (versionAtLeast(live.agentVersion, 0, 5) && !live.readOnly) {
+            item {
+                Row_(Icons.Rounded.Key, "Comptes debrid", "Real-Debrid, AllDebrid, TorBox, Premiumize : fin du premium") {
+                    nav.navigate(com.karelisio.vigie.ui.navigation.DebridRoute)
                 }
             }
         }

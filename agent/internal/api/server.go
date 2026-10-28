@@ -16,6 +16,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/alerts"
 	"github.com/karelisio/vigie/agent/internal/checks"
 	"github.com/karelisio/vigie/agent/internal/config"
+	"github.com/karelisio/vigie/agent/internal/debrid"
 	"github.com/karelisio/vigie/agent/internal/docker"
 	"github.com/karelisio/vigie/agent/internal/monitor"
 	"github.com/karelisio/vigie/agent/internal/oracle"
@@ -41,6 +42,8 @@ type Server struct {
 	LogWatch LogWatcher
 	// AutoHeal répare automatiquement les conteneurs (renseigné après New).
 	AutoHeal AutoHealer
+	// Debrid vérifie les comptes debrid (renseigné après New).
+	Debrid *debrid.Manager
 }
 
 func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, upd *updater.Manager, log *slog.Logger, version string) *Server {
@@ -110,6 +113,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/logwatch", s.logWatch)
 	mux.HandleFunc("GET /api/v1/autoheal", s.autoHeal)
 	mux.HandleFunc("GET /api/v1/audit", s.audit)
+
+	// Secrets (jetons, clés) : uniquement sous ces deux préfixes.
+	mux.HandleFunc("GET /api/v1/channels", s.getChannels)
+	mux.HandleFunc("PUT /api/v1/channels", s.putChannels)
+	mux.HandleFunc("POST /api/v1/channels/test", s.testChannels)
+	mux.HandleFunc("GET /api/v1/debrid", s.getDebrid)
+	mux.HandleFunc("PUT /api/v1/debrid/accounts", s.putDebridAccounts)
+	mux.HandleFunc("POST /api/v1/debrid/check", s.checkDebrid)
 
 	mux.HandleFunc("GET /api/v1/ws", s.live)
 

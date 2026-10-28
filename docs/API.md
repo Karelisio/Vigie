@@ -75,6 +75,23 @@ Quota de trafic (`net_quota_tb`, `net_quota_alert`) : alerte `traffic` au seuil 
 
 Réparation automatique (réglages `auto_heal`, `auto_heal_all`, `auto_heal_list[]`, `auto_heal_delay` en minutes (1 à 60, 3 par défaut), `auto_heal_max` (1 à 10, 3 par défaut)) : pour les conteneurs retenus, jamais l'agent ni un conteneur ignoré, arrêté depuis l'appli ou visé par une action depuis moins de 2 min, l'agent redémarre (`restart`) un conteneur dont le healthcheck échoue depuis `auto_heal_delay` minutes, et relance (`start`) un conteneur arrêté anormalement (code de sortie autre que 0, 130, 137 et 143, ou OOM) et toujours arrêté 20 s plus tard, quelle que soit sa politique de redémarrage. Au plus `auto_heal_max` réparations par heure glissante et par conteneur ; au-delà, alerte `autoheal` critique « Réparation automatique abandonnée », une seule, close quand le conteneur fonctionne de nouveau. Chaque réparation donne une notification `autoheal` (info), une entrée `autoheal` au journal (`ip` : `agent`, `ua` : `vigie`) et un événement `autoheal` dans la chronologie du conteneur (`detail` : la raison).
 
+## Canaux d'alerte et comptes debrid
+
+Les jetons et clés restent sur l'agent. Les réponses ne les renvoient que masqués (`••••` suivi des 4 derniers caractères) ; un `PUT` qui renvoie la valeur masquée ou vide conserve le secret enregistré. Ils n'apparaissent ni dans les logs ni dans le journal des actions, et uniquement sous `/api/v1/channels` et `/api/v1/debrid`.
+
+| Méthode | Route | |
+| --- | --- | --- |
+| GET | `/api/v1/channels` | `{channels: [{type, enabled, min_level, …}]}` : `type` `telegram` (`bot_token`, `chat_id`), `discord` (`webhook_url`) ou `ntfy` (`server`, `topic`, `token` facultatif) ; `min_level` `all` (toutes les alertes) ou `critical` |
+| PUT | `/api/v1/channels` | même format, configuration complète : un canal par type, un canal absent est supprimé avec ses secrets. Renvoie la configuration masquée |
+| POST | `/api/v1/channels/test` | `{type?}` : message d'essai au canal demandé (même désactivé) ou à tous les canaux actifs. Réponse `{results: [{type, ok, error?}]}` |
+| GET | `/api/v1/debrid` | `{accounts: [{id, provider, label, key, ok, premium, expires, days_left, username?, error?, refused, checked_at}]}` |
+| PUT | `/api/v1/debrid/accounts` | `[{id?, provider, label, key}]` : liste complète (`provider` : `realdebrid`, `alldebrid`, `torbox`, `premiumize` ; sans `id` connu, nouveau compte et clé obligatoire), puis vérification. Renvoie l'état |
+| POST | `/api/v1/debrid/check` | vérifie tous les comptes maintenant, renvoie l'état |
+
+Canaux : toute alerte qui donne lieu à une notification push (hors heures calmes et maintenance, résumés compris) part aussi vers les canaux actifs, même sans Firebase. Envoi en arrière-plan, 10 s au plus par essai, 2 nouvelles tentatives en cas d'erreur passagère. Telegram : message HTML ; Discord : embed coloré selon la sévérité, sans mentions ; ntfy : publication JSON, priorité 4 (critique), 3 ou 2 (retour à la normale) et étiquette émoji.
+
+Debrid : vérification une minute après le démarrage, puis toutes les 6 h. `expires` : fin du premium (ms, 0 si inconnue), `days_left` : jours entiers restants, `refused` : clé refusée par le fournisseur, `checked_at` : 0 avant la première vérification. Alertes `debrid` : premium qui expire dans 7 jours (warning), dans 1 jour (critical), expiré ou clé refusée (critical), une fois par seuil et par échéance, même après un redémarrage.
+
 ## Temps réel
 
 `WS /api/v1/ws` envoie à la connexion `hello`, `overview`, `system`, `containers`, `checks`, `settings` (et l'opération en cours éventuelle), puis :

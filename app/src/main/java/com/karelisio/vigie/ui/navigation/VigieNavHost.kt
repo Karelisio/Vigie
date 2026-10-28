@@ -149,6 +149,8 @@ fun VigieNavHost(nav: NavHostController, start: Any, snackbar: SnackbarHostState
                         screen<AuditRoute> { AuditScreen(nav) }
                         screen<AboutRoute> { AboutScreen(nav) }
                         screen<ReportRoute> { com.karelisio.vigie.ui.report.ReportScreen(nav) }
+                        screen<ChannelsRoute> { com.karelisio.vigie.ui.settings.ChannelsScreen(nav) }
+                        screen<DebridRoute> { com.karelisio.vigie.ui.settings.DebridScreen(nav) }
                     }
 
                     AnimatedVisibility(

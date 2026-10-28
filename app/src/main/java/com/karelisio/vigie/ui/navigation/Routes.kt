@@ -32,6 +32,8 @@ import kotlinx.serialization.Serializable
 @Serializable data object AboutRoute
 @Serializable data object ReportRoute
 @Serializable data object OnboardingRoute
+@Serializable data object ChannelsRoute
+@Serializable data object DebridRoute
 
 data class TopLevel(val route: Any, val label: String, val icon: ImageVector, val selectedIcon: ImageVector)
 

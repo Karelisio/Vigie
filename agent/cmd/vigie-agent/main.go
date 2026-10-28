@@ -20,6 +20,7 @@ import (
 	"github.com/karelisio/vigie/agent/internal/autoheal"
 	"github.com/karelisio/vigie/agent/internal/checks"
 	"github.com/karelisio/vigie/agent/internal/config"
+	"github.com/karelisio/vigie/agent/internal/debrid"
 	"github.com/karelisio/vigie/agent/internal/docker"
 	"github.com/karelisio/vigie/agent/internal/logwatch"
 	"github.com/karelisio/vigie/agent/internal/monitor"
@@ -159,9 +160,14 @@ func run(log *slog.Logger) error {
 		}
 	}
 
+	// Comptes debrid : vérifiés toutes les 6 h, alertes d'expiration via le moteur.
+	dm := debrid.New(ctx, st, log)
+	dm.OnCheck = eng.OnDebrid
+
 	apiSrv := api.New(cfg, mon, dk, st, runner, eng, upd, log, version)
 	apiSrv.LogWatch = lw
 	apiSrv.AutoHeal = heal
+	apiSrv.Debrid = dm
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           apiSrv.Handler(),
@@ -177,6 +183,7 @@ func run(log *slog.Logger) error {
 	go updater.NewNightly(upd, mon, st, log).Run(ctx)
 	go lw.Run(ctx)
 	go heal.Run(ctx)
+	go dm.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -77,6 +77,10 @@ import androidx.navigation.NavHostController
 import com.karelisio.vigie.appContainer
 import com.karelisio.vigie.data.Connection
 import com.karelisio.vigie.data.Consumer
+import com.karelisio.vigie.data.DebridState
+import com.karelisio.vigie.data.debrid
+import com.karelisio.vigie.data.debridState
+import com.karelisio.vigie.data.versionAtLeast
 import com.karelisio.vigie.data.Fmt
 import com.karelisio.vigie.data.History
 import com.karelisio.vigie.data.Issue
@@ -106,7 +110,9 @@ import com.karelisio.vigie.ui.theme.Vigie
 import com.karelisio.vigie.ui.theme.numeric
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class HomeViewModel : ViewModel() {
@@ -130,6 +136,13 @@ class HomeViewModel : ViewModel() {
     var range = "24h"
         private set
 
+    /** Comptes debrid (agent 0.5.0 et plus ; sinon la carte n'est pas affichée). */
+    val debrid = repo.debridState().stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun loadDebrid() {
+        if (versionAtLeast(live.value.agentVersion, 0, 5) && !live.value.readOnly) viewModelScope.launch { runCatching { repo.debrid() } }
+    }
+
     init {
         loadHistory("24h")
         loadOracle()
@@ -140,6 +153,7 @@ class HomeViewModel : ViewModel() {
     private fun loadInsights() {
         viewModelScope.launch { runCatching { repo.traffic() }.onSuccess { _traffic.value = it } }
         loadTop(_topRange.value)
+        loadDebrid()
     }
 
     fun loadTop(range: String) {
@@ -205,6 +219,9 @@ fun HomeScreen(nav: NavHostController, vm: HomeViewModel = viewModel()) {
     val traffic by vm.traffic.collectAsStateWithLifecycle()
     val top by vm.top.collectAsStateWithLifecycle()
     val topRange by vm.topRange.collectAsStateWithLifecycle()
+    val debrid by vm.debrid.collectAsStateWithLifecycle()
+    // Version de l'agent connue après la connexion : les comptes debrid sont chargés à ce moment-là.
+    LaunchedEffect(state.agentVersion, activeId) { vm.loadDebrid() }
 
     RadarRefreshBox(isRefreshing = refreshing, onRefresh = vm::refresh, modifier = Modifier.fillMaxSize()) {
         HomeContent(
@@ -233,6 +250,8 @@ fun HomeScreen(nav: NavHostController, vm: HomeViewModel = viewModel()) {
             topRange = topRange,
             onTopRange = vm::loadTop,
             onConsumer = { name -> nav.navigate(ContainerRoute(state.containers.firstOrNull { it.name == name }?.id ?: name, name)) },
+            debrid = debrid,
+            onDebrid = { nav.navigate(com.karelisio.vigie.ui.navigation.DebridRoute) },
         )
     }
 
@@ -263,6 +282,8 @@ internal fun HomeContent(
     topRange: String = "24h",
     onTopRange: (String) -> Unit = {},
     onConsumer: (String) -> Unit = {},
+    debrid: DebridState? = null,
+    onDebrid: () -> Unit = {},
 ) {
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 96.dp
     LazyColumn(
@@ -295,6 +316,9 @@ internal fun HomeContent(
             HistoryCard(history, range, state, onRange = onRange, modifier = Modifier.padding(horizontal = 16.dp).cascade(3))
         }
         item(key = "containers") { ContainersSummary(state, Modifier.padding(horizontal = 16.dp).cascade(4), onContainers) }
+        if (debrid != null && debrid.accounts.isNotEmpty() && versionAtLeast(state.agentVersion, 0, 5)) {
+            item(key = "debrid") { DebridCard(debrid, onDebrid, Modifier.padding(horizontal = 16.dp).animateItem().cascade(5)) }
+        }
         if (top != null) {
             item(key = "top") {
                 TopCard(top, state.containers, topRange, onTopRange, onConsumer, Modifier.padding(horizontal = 16.dp).animateItem().cascade(5))
