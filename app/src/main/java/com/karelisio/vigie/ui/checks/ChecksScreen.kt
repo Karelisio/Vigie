@@ -348,7 +348,14 @@ internal fun CheckCard(
             }
             AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                 Column(Modifier.padding(top = 14.dp)) {
-                    if (c.recent.size >= 2) {
+                    if (c.recent.isNotEmpty() && c.recent.none { it.ok }) {
+                        Text(
+                            "Aucune réponse valide sur les ${c.recent.size} derniers essais",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = scheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                    } else if (c.recent.size >= 2) {
                         Text("Latence (${c.recent.size} derniers essais)", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
                         Spacer(Modifier.height(6.dp))
                         Sparkline(

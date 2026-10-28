@@ -399,11 +399,33 @@ func (r *Runner) probe(ctx context.Context, c store.Check) store.CheckResult {
 	case resp.StatusCode != c.ExpectedStatus:
 		res.Error = fmt.Sprintf("code %d (attendu %d)", resp.StatusCode, c.ExpectedStatus)
 	case c.Keyword != "" && !strings.Contains(string(body), c.Keyword):
-		res.Error = fmt.Sprintf("mot-clé « %s » absent", c.Keyword)
+		res.Error = fmt.Sprintf("mot-clé « %s » absent (réponse : %s)", c.Keyword, describeBody(resp.Header.Get("Content-Type"), body))
 	default:
 		res.OK = true
 	}
 	return res
+}
+
+// describeBody résume ce qui a été reçu, pour diagnostiquer un mot-clé absent.
+func describeBody(contentType string, body []byte) string {
+	ct := strings.ToLower(contentType)
+	head := strings.ToLower(strings.TrimSpace(string(body[:min(len(body), 512)])))
+	switch {
+	case len(body) == 0:
+		return "vide"
+	case strings.Contains(ct, "html") || strings.HasPrefix(head, "<!doctype html") || strings.HasPrefix(head, "<html"):
+		if i := strings.Index(head, "<title>"); i >= 0 {
+			if j := strings.Index(head[i:], "</title>"); j > 7 && i+j <= len(body) {
+				return "page HTML « " + strings.TrimSpace(string(body[i+7:i+j])) + " »"
+			}
+		}
+		return "page HTML"
+	case strings.Contains(ct, "json") || strings.HasPrefix(head, "{") || strings.HasPrefix(head, "["):
+		return "JSON sans ce mot-clé"
+	case ct != "":
+		return strings.SplitN(ct, ";", 2)[0]
+	}
+	return "texte"
 }
 
 func describe(err error) string {
