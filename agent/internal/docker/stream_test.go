@@ -35,10 +35,10 @@ func TestDemux(t *testing.T) {
 
 func TestHealth(t *testing.T) {
 	cases := map[string]string{
-		"Up 2 hours (healthy)":       "healthy",
-		"Up 1 second (unhealthy)":    "unhealthy",
-		"Up 3 s (health: starting)":  "starting",
-		"Exited (0) 2 minutes ago":   "",
+		"Up 2 hours (healthy)":      "healthy",
+		"Up 1 second (unhealthy)":   "unhealthy",
+		"Up 3 s (health: starting)": "starting",
+		"Exited (0) 2 minutes ago":  "",
 	}
 	for status, want := range cases {
 		if got := (Container{Status: status}).Health(); got != want {
