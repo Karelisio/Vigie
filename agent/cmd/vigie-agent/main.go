@@ -23,11 +23,13 @@ import (
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/debrid"
 	"github.com/karelisio/vigie/agent/internal/docker"
+	"github.com/karelisio/vigie/agent/internal/domains"
 	"github.com/karelisio/vigie/agent/internal/logwatch"
 	"github.com/karelisio/vigie/agent/internal/monitor"
 	"github.com/karelisio/vigie/agent/internal/qr"
 	"github.com/karelisio/vigie/agent/internal/regression"
 	"github.com/karelisio/vigie/agent/internal/settings"
+	"github.com/karelisio/vigie/agent/internal/statuspage"
 	"github.com/karelisio/vigie/agent/internal/storage"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/system"
@@ -190,6 +192,19 @@ func run(log *slog.Logger) error {
 	sto.OnForecast = eng.OnDiskForecast
 	sto.OnVolumes = eng.OnVolumes
 	apiSrv.Storage = sto
+
+	// Noms de domaine : expiration vérifiée chaque jour (RDAP), alertes via le moteur.
+	doms := domains.New(ctx, st, log, domains.Options{
+		PublicURL: cfg.PublicURL, Version: version, Manual: func() []string { return set.Get().Domains },
+	})
+	doms.OnCheck = eng.OnDomains
+	apiSrv.Domains = doms
+	// Page d'état publique (désactivée tant qu'elle n'est pas activée depuis l'appli).
+	sp, err := statuspage.New(ctx, st, statuspage.Options{Checks: mon.Checks, Containers: mon.Containers, DownAfter: cfg.CheckFailures})
+	if err != nil {
+		return err
+	}
+	apiSrv.StatusPage = sp
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           apiSrv.Handler(),
@@ -208,6 +223,7 @@ func run(log *slog.Logger) error {
 	go dm.Run(ctx)
 	go bk.Run(ctx)
 	go sto.Run(ctx)
+	go doms.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

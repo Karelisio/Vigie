@@ -175,6 +175,11 @@ func (s *Server) wrap(next http.Handler) http.Handler {
 			}
 			return
 		}
+		if isPublicStatus(r) {
+			// Page d'état publique : l'identifiant secret de l'adresse tient lieu de token.
+			next.ServeHTTP(sw, r)
+			return
+		}
 		role := s.authorized(r)
 		if role == "" {
 			s.limiter.authFailed(ip)

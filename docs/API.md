@@ -1,6 +1,6 @@
 # API de l'agent Vigie (v1)
 
-Base : `https://vigie.example.com`. Toutes les routes sauf `/healthz` exigent `Authorization: Bearer <token>`.
+Base : `https://vigie.example.com`. Toutes les routes sauf `/healthz` et la page d'état publique (`/status/…`) exigent `Authorization: Bearer <token>`.
 Dates en millisecondes Unix. Erreurs : `{"error": "message"}` avec le code HTTP adapté (401, 404, 409, 429, 502…).
 
 ## Système
@@ -164,6 +164,46 @@ Alertes `storage` (réglages `disk_forecast_days`, 14 par défaut, 0 à 90, 0 : 
 
 - disque plein dans moins de `disk_forecast_days` jours (évalué toutes les heures) : « Disque plein dans ~N jours » (warning, critical à 3 jours ou moins), « Au rythme actuel (+X Go/jour), le disque sera plein dans ~N jours. » avec le volume qui grossit le plus s'il compte pour au moins un quart de la croissance ; une fois, puis rappel tous les 3 jours au plus tant que la prévision reste sous le préavis ; résolue (« Disque : prévision rassurante ») quand elle repasse au-dessus d'une fois et demie le préavis (et d'au moins 2 jours de plus) ou que la croissance s'arrête. Mémorisée en base (redémarrages).
 - volume qui grossit de plus de `volume_growth_gb` Go par jour (`growth_day`) : « Le volume X grossit vite », « +Y Go en 24 h, Z au total. Utilisé par … », une fois par jour au plus et par volume (23 h d'écart minimum), même après un redémarrage.
+
+## Noms de domaine (agent 0.6.0)
+
+| Méthode | Route | |
+| --- | --- | --- |
+| GET | `/api/v1/domains` | domaines suivis et dernier résultat connu, sans interroger les registres : `[{domain, source, services[], expires, days_left, registered, last_changed, registrar, status[], checked_at, error?, note?}]` (ordre alphabétique). Autorisé en lecture seule |
+| POST | `/api/v1/domains/check` | interroge les registres maintenant (2 min au plus ; un domaine vérifié il y a moins d'une minute n'est pas réinterrogé), renvoie la liste |
+
+- Domaines suivis : le domaine enregistrable (liste des suffixes publics) de l'hôte de chaque check HTTP ou Stremio et de `VIGIE_PUBLIC_URL` (`source` `auto`, `services` : noms des checks, `Vigie` pour l'adresse publique), plus le réglage `domains` (`source` `manual`, réduit lui aussi au domaine enregistrable : `www.exemple.co.uk` → `exemple.co.uk`). Jamais d'adresse IP, de `localhost`, de nom interne (`.local`, `.lan`, `.internal`…) ni de sous-domaine d'un suffixe privé (`duckdns.org`, `github.io`…) ; un tel domaine ajouté à la main apparaît avec `error`. 60 domaines au plus.
+- RDAP : serveur du TLD d'après l'amorçage IANA (`https://data.iana.org/rdap/dns.json`, HTTPS seulement, gardé 7 jours en base), requête `<serveur>domain/<nom>` ; TLD absent de l'amorçage : `https://rdap.org/domain/<nom>`. 15 s et 1 Mio au plus par réponse, 4 requêtes en parallèle, 5 redirections au plus. Événements lus : `expiration` → `expires`, `registration` → `registered`, `last changed` → `last_changed` ; `registrar` : nom (`fn`, sinon `org`) de l'entité de rôle `registrar` ; `status` : statuts RDAP en minuscules (12 au plus). Dates acceptées : RFC 3339, sans fuseau (UTC), fuseau sans deux-points, espace au lieu de `T`, jour seul.
+- `expires` : 0 si inconnue ; `days_left` : jours entiers restants (0 le dernier jour, négatif une fois expiré), `null` si la date est inconnue. Registre sans date d'expiration : `days_left` `null`, pas d'`error`, et `note` l'explique. `checked_at` : 0 avant la première vérification. `error` (en français) : registre injoignable, domaine introuvable, trop de requêtes, réponse illisible ou trop volumineuse… ; une erreur garde les dernières données valables.
+- Vérification 2 min après le démarrage puis chaque heure : seuls les domaines vérifiés il y a plus d'un jour (6 h après une erreur) sont interrogés. Résultats conservés en base.
+- Alertes `domain` (`target` : le domaine) à chaque passage : warning quand il reste au plus `domain_days` jours (réglage, 30 par défaut, 1 à 180), critical à 7 jours puis à l'expiration ; une seule fois par seuil et par date d'expiration, même après un redémarrage. Quand la date d'expiration recule (renouvellement), l'alerte est close (info, résolue) et les seuils sont réarmés.
+
+## Page d'état publique (agent 0.6.0)
+
+Configuration (token principal uniquement : 403 en lecture seule) :
+
+| Méthode | Route | |
+| --- | --- | --- |
+| GET | `/api/v1/statuspage` | `{enabled, slug, title, description, items[], show_uptime, url}` |
+| PUT | `/api/v1/statuspage` | même format (champs absents : valeur actuelle ; `slug` et `url` ignorés), renvoie la configuration |
+| POST | `/api/v1/statuspage/regenerate` | nouvel identifiant secret (l'ancien lien cesse aussitôt de fonctionner), renvoie la configuration |
+
+- `enabled` : faux par défaut. `slug` : identifiant secret de l'adresse, 22 caractères URL-safe (128 bits) tirés au hasard. `url` : `VIGIE_PUBLIC_URL` + `/status/<slug>` (vide si `VIGIE_PUBLIC_URL` n'est pas défini). `title` (80 caractères au plus, `État des services` si vide), `description` (300 au plus), `show_uptime` (barres et pourcentages, vrai par défaut).
+- `items[]` (30 au plus, sans doublon) : `{kind, ref, label}` ; `kind` `check` (`ref` : identifiant du check, en texte) ou `container` (`ref` : nom du conteneur) ; `label` : nom public, obligatoire (60 caractères au plus). Configuration conservée en base (clé `status_page`), modifications inscrites au journal.
+
+Pages publiques, **sans token** (seules exceptions avec `/healthz`) :
+
+| Méthode | Route | |
+| --- | --- | --- |
+| GET | `/status/{slug}` | page HTML |
+| GET | `/status/{slug}.json` | `{title, description, status, status_text, updated_at, items[], incidents[]}` |
+
+- Page désactivée ou identifiant faux (comparé à temps constant) : même réponse `404` `Page introuvable`. La limitation de débit par IP s'applique ; une erreur d'identifiant ne compte pas comme un échec d'authentification. Toute autre méthode ou tout autre chemin sous `/status/` exige le token.
+- `status` : `operational` (« Tous les services fonctionnent »), `degraded` (« Perturbations » : un élément n'est pas en ligne) ou `outage` (« Panne » : plus de la moitié des éléments hors ligne). `items[]` : `{name, status, uptime?, days?}` ; `status` `online`, `degraded`, `offline` ou `unknown`. Check : en ligne si le dernier résultat est bon, hors ligne après `VIGIE_CHECK_FAILURES` échecs consécutifs, dégradé avant, inconnu s'il est désactivé ou pas encore exécuté ; un check supprimé disparaît de la page. Conteneur : en ligne s'il tourne, dégradé si son healthcheck échoue ou démarre, hors ligne sinon (absent compris).
+- Avec `show_uptime` : `uptime` (% sur les jours avec données) et `days[]` (90 jours, du plus ancien à aujourd'hui : `{date: "AAAA-MM-JJ" (UTC), uptime: % ou null}`). Checks : historique quotidien des checks (90 jours). Conteneurs : part des quarts d'heure mesurés par l'agent où le conteneur tournait (8 jours d'historique, à partir de sa première mesure).
+- `incidents[]` (7 derniers jours, en cours d'abord, 20 au plus) : `{name, status (offline/degraded), start, end}` (`end` `null` : en cours). Checks : au moins `VIGIE_CHECK_FAILURES` échecs consécutifs. Conteneurs : arrêt (`die` ou pause → `start`) de 2 min ou plus, healthcheck en échec (`unhealthy` → `healthy`) de 2 min ou plus.
+- Rien d'autre ne sort : ni adresse, ni IP, ni port, ni image, ni message d'erreur, ni nom de check ou de conteneur, ni nom du serveur ; seuls les noms publics choisis. Historique recalculé au plus une fois par minute.
+- HTML généré par l'agent, sans JavaScript, CSS intégré, clair ou sombre selon le système, actualisation automatique toutes les 60 s, icône d'onglet de la couleur de l'état. En-têtes : `Content-Security-Policy: default-src 'none'; style-src 'sha256-…'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `X-Robots-Tag: noindex, nofollow`, `Cache-Control: max-age=30` (`no-store` pour la 404).
 
 ## Temps réel
 

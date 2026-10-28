@@ -157,6 +157,8 @@ L'appli vérifie la dernière release au lancement (au plus toutes les 6 h) et p
 - **Retour à la version précédente** : après une mise à jour par Vigie (bouton, stack, nuit), « Revenir à cette version » dans la fiche du conteneur, sa chronologie ou la notification de surconsommation. Le conteneur est recréé à l'identique avec l'image d'avant (re-téléchargée si le nettoyage l'a supprimée), et la version écartée est ignorée par les mises à jour automatiques jusqu'à la suivante (« Ne plus ignorer » pour la réautoriser).
 - **Accès partagés en lecture seule** (Réglages → Accès partagés) : un QR code ou un lien pour qu'un proche consulte l'état du serveur, sans pouvoir agir ni voir les logs et les secrets ; révocable à tout moment.
 - **Sauvegardes** chaque jour (ou à la demande) vers un stockage compatible S3 : volumes, dossiers montés et données de Vigie, compressés, avec rétention et arrêt facultatif du conteneur pendant la copie (Réglages → Sauvegardes, voir [plus bas](#sauvegardes)).
+- **Noms de domaine** (Réglages → Noms de domaine) : date d'expiration lue chaque jour chez le registre (RDAP) pour les domaines de tes services et ceux que tu ajoutes, jours restants en couleur, bureau d'enregistrement ; alerte 30 jours avant (réglable), puis 7 jours avant et à l'expiration, close au renouvellement.
+- **Page d'état publique** (Réglages → Page d'état publique) : une page web à partager, sans compte ni appli, avec l'état des services et conteneurs choisis sous le nom que tu leur donnes, la disponibilité sur 90 jours et les incidents de la semaine ; adresse secrète, que tu peux changer à tout moment (voir [plus bas](#page-détat-publique)).
 - **Deux widgets** (serveur, services) redimensionnables aux couleurs du système, **tuile** de réglages rapides, **raccourcis** Conteneurs/Services, **mode hors ligne** avec l'heure de la dernière mise à jour.
 - Plusieurs serveurs possibles (nom, URL, token), tokens chiffrés sur le téléphone (EncryptedSharedPreferences).
 - Respecte le réglage système « Supprimer les animations ».
@@ -218,6 +220,16 @@ Sur le VPS (terminal), dans un dossier de travail :
      Le token en place est conservé (sinon un nouveau est généré, avec son QR code) ; ressaisis ensuite les clés du stockage dans l'appli.
 4. **Redémarre le conteneur**.
 
+## Page d'état publique
+
+Une page web, sans compte ni appli, pour montrer à tes proches si tes services fonctionnent : état global (« Tous les services fonctionnent », « Perturbations » ou « Panne »), état de chaque service et conteneur choisi, barres de disponibilité sur 90 jours et incidents des 7 derniers jours. Elle s'actualise toute seule chaque minute, suit le thème clair ou sombre du téléphone et fonctionne sans JavaScript.
+
+1. Appli › Réglages › **Page d'état publique** : coche les services et conteneurs à montrer et donne à chacun un **nom public** (« Recherche de liens » plutôt que `aiostreams`), choisis un titre, active **Page publique**, puis **Enregistrer**.
+2. **Partager** ou **Copier** le lien : `https://vigie.15122000.xyz/status/<identifiant>`. L'identifiant (22 caractères tirés au hasard) tient lieu de mot de passe : seules les personnes qui ont le lien voient la page, et elle n'est pas indexée par les moteurs de recherche.
+3. **Pangolin** : la ressource `vigie` ne doit pas exiger de connexion Pangolin pour `/status/`. C'est déjà le cas si l'appli se connecte avec son token (SSO désactivé sur la ressource) ; si tu as gardé le SSO avec des règles ciblées, ajoute une règle *Path* `/status/*` → **Always Allow**. Le reste de l'API exige toujours le token.
+
+La page n'affiche que les noms choisis : ni adresse, ni IP, ni image, ni message d'erreur, ni nom de conteneur ou de serveur. **Changer le lien** crée un nouvel identifiant : l'ancien lien affiche aussitôt « Page introuvable », comme une page désactivée. Une version JSON est servie à la même adresse suivie de `.json` (détail dans [`docs/API.md`](docs/API.md#page-détat-publique-agent-060)).
+
 ---
 
 ## Configuration de l'agent
@@ -245,7 +257,7 @@ Sur le VPS (terminal), dans un dossier de travail :
 
 ### Sécurité
 
-- Toutes les routes (sauf `/healthz`) exigent `Authorization: Bearer <token>`, comparé à temps constant.
+- Toutes les routes (sauf `/healthz` et la [page d'état publique](#page-détat-publique), protégée par son adresse secrète) exigent `Authorization: Bearer <token>`, comparé à temps constant.
 - Limitation de débit par IP ; 10 échecs d'authentification en 10 min → IP bloquée 15 min.
 - Actions possibles : **start, stop, restart** et **mise à jour d'image**. Une mise à jour ne télécharge que l'image déjà configurée sur le conteneur et le recrée avec sa configuration actuelle : l'appli ne peut fournir ni image ni configuration. L'agent refuse de s'arrêter lui-même.
 - Chaque action est enregistrée dans un journal (date, IP, action, cible, résultat), consultable dans l'appli.

@@ -19,8 +19,10 @@ import (
 	"github.com/karelisio/vigie/agent/internal/config"
 	"github.com/karelisio/vigie/agent/internal/debrid"
 	"github.com/karelisio/vigie/agent/internal/docker"
+	"github.com/karelisio/vigie/agent/internal/domains"
 	"github.com/karelisio/vigie/agent/internal/monitor"
 	"github.com/karelisio/vigie/agent/internal/oracle"
+	"github.com/karelisio/vigie/agent/internal/statuspage"
 	"github.com/karelisio/vigie/agent/internal/storage"
 	"github.com/karelisio/vigie/agent/internal/store"
 	"github.com/karelisio/vigie/agent/internal/updater"
@@ -50,6 +52,10 @@ type Server struct {
 	Backups *backup.Service
 	// Storage suit la prévision du disque et la taille des volumes (renseigné après New).
 	Storage *storage.Service
+	// Domains suit l'expiration des noms de domaine (renseigné après New).
+	Domains *domains.Manager
+	// StatusPage publie la page d'état publique (renseigné après New).
+	StatusPage *statuspage.Manager
 }
 
 func New(cfg *config.Config, mon *monitor.Monitor, dk *docker.Client, st *store.Store, runner *checks.Runner, al *alerts.Engine, upd *updater.Manager, log *slog.Logger, version string) *Server {
@@ -139,6 +145,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/backups/test", s.backupTest)
 	mux.HandleFunc("GET /api/v1/backups/history", s.backupHistory)
 	mux.HandleFunc("GET /api/v1/backups/objects", s.backupObjects)
+
+	mux.HandleFunc("GET /api/v1/domains", s.getDomains)
+	mux.HandleFunc("POST /api/v1/domains/check", s.checkDomains)
+	mux.HandleFunc("GET /api/v1/statuspage", s.getStatusPage)
+	mux.HandleFunc("PUT /api/v1/statuspage", s.putStatusPage)
+	mux.HandleFunc("POST /api/v1/statuspage/regenerate", s.regenerateStatusPage)
+	// Page d'état publique : seules routes sans token (voir isPublicStatus).
+	mux.HandleFunc("GET /status/{slug}", s.publicStatus)
 
 	mux.HandleFunc("GET /api/v1/ws", s.live)
 
