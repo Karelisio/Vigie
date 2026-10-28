@@ -199,10 +199,15 @@ class Repository(
     suspend fun settings(): AgentSettings = api.get(requireServer(), "/api/v1/settings")
 
     suspend fun saveSettings(s: AgentSettings): AgentSettings {
-        // Un agent antérieur à 0.3.0 refuse les champs qu'il ne connaît pas.
+        // Un agent plus ancien refuse les champs qu'il ne connaît pas : on n'envoie que ceux de sa version.
         val body = VigieJson.encodeToJsonElement(AgentSettings.serializer(), s).jsonObject
-        val legacy = !live.value.updatesEnabled
-        return api.put(requireServer(), "/api/v1/settings", if (legacy) JsonObject(body - "prune_images") else body)
+        val known = when {
+            !live.value.updatesEnabled -> SETTINGS_0_2
+            !live.value.stackActions -> SETTINGS_0_2 + "prune_images"
+            versionAtLeast(live.value.agentVersion, 0, 4) -> body.keys
+            else -> SETTINGS_0_2 + "prune_images"
+        }
+        return api.put(requireServer(), "/api/v1/settings", JsonObject(body.filterKeys { it in known }))
     }
 
     suspend fun mute(id: String, muted: Boolean): AgentSettings {
@@ -255,4 +260,17 @@ class Repository(
 
     private fun deviceName() = listOf(Build.MANUFACTURER.replaceFirstChar { it.uppercase() }, Build.MODEL)
         .distinct().joinToString(" ")
+}
+
+/** Champs de réglages connus des agents 0.2.x (avant les mises à jour depuis l'appli). */
+private val SETTINGS_0_2 = setOf(
+    "cpu", "ram", "disk", "duration_min", "quiet_enabled", "quiet_start", "quiet_end",
+    "muted", "image_updates", "oracle_watch", "cert_days",
+)
+
+/** Compare une version « X.Y.Z » (les versions de développement sont considérées récentes). */
+internal fun versionAtLeast(version: String, major: Int, minor: Int): Boolean {
+    val parts = version.removePrefix("v").split('.', '-').mapNotNull { it.toIntOrNull() }
+    if (parts.size < 2) return version.isNotEmpty()
+    return parts[0] > major || (parts[0] == major && parts[1] >= minor)
 }

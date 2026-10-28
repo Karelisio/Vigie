@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +30,39 @@ type Settings struct {
 	OracleWatch  bool     `json:"oracle_watch"`
 	CertDays     int      `json:"cert_days"`
 	PruneImages  bool     `json:"prune_images"` // supprimer l'ancienne image après une mise à jour
+
+	// Mises à jour automatiques de nuit.
+	AutoUpdate      bool     `json:"auto_update"`
+	AutoUpdateTime  string   `json:"auto_update_time"`  // HH:MM, heure locale (TZ)
+	AutoUpdateAll   bool     `json:"auto_update_all"`   // tous les conteneurs (sinon AutoUpdateList)
+	AutoUpdateList  []string `json:"auto_update_list"`  // noms des conteneurs concernés
+	AutoUpdateAgent bool     `json:"auto_update_agent"` // inclure l'agent lui-même
+
+	// Quota de trafic sortant mensuel (Oracle Always Free : 10 To).
+	NetQuotaTB    float64 `json:"net_quota_tb"`    // 0 = pas de suivi de quota
+	NetQuotaAlert int     `json:"net_quota_alert"` // seuil d'alerte en % du quota
+
+	// Mode maintenance : aucune notification jusqu'à cette date (ms Unix, 0 = inactif).
+	MaintenanceUntil int64 `json:"maintenance_until"`
+
+	// Alertes sur les logs des conteneurs.
+	LogRules []LogRule `json:"log_rules"`
+
+	// Rapport hebdomadaire (dimanche soir).
+	WeeklyReport bool `json:"weekly_report"`
+}
+
+// LogRule déclenche une alerte quand une ligne de log correspond au motif.
+type LogRule struct {
+	ID        string `json:"id"`
+	Container string `json:"container"` // nom du conteneur
+	Pattern   string `json:"pattern"`
+	Regex     bool   `json:"regex"` // sinon : texte, sans tenir compte de la casse
+}
+
+// InMaintenance indique si les notifications sont suspendues.
+func (s Settings) InMaintenance(t time.Time) bool {
+	return s.MaintenanceUntil > 0 && t.UnixMilli() < s.MaintenanceUntil
 }
 
 func (s Settings) AlertDuration() time.Duration { return time.Duration(s.DurationMin) * time.Minute }
@@ -90,18 +124,65 @@ func (s *Settings) validate() error {
 			return err
 		}
 	}
+	s.Muted = cleanNames(s.Muted)
+	if s.AutoUpdateTime == "" {
+		s.AutoUpdateTime = "04:00"
+	}
+	if _, err := parseClock(s.AutoUpdateTime); err != nil {
+		return err
+	}
+	s.AutoUpdateList = cleanNames(s.AutoUpdateList)
+	if s.NetQuotaTB < 0 || s.NetQuotaTB > 1000 {
+		return errors.New("quota de trafic hors limites (0–1000 To)")
+	}
+	if s.NetQuotaAlert == 0 {
+		s.NetQuotaAlert = 80
+	}
+	if s.NetQuotaAlert < 50 || s.NetQuotaAlert > 100 {
+		return errors.New("seuil d'alerte du quota hors limites (50–100 %)")
+	}
+	if s.MaintenanceUntil < 0 {
+		s.MaintenanceUntil = 0
+	}
+	if len(s.LogRules) > 20 {
+		return errors.New("20 alertes sur les logs au maximum")
+	}
+	rules := []LogRule{}
+	for i, r := range s.LogRules {
+		r.Container = strings.TrimSpace(strings.TrimPrefix(r.Container, "/"))
+		r.Pattern = strings.TrimSpace(r.Pattern)
+		if r.Container == "" || r.Pattern == "" {
+			return errors.New("alerte sur les logs : conteneur et texte obligatoires")
+		}
+		if len(r.Pattern) > 200 {
+			return errors.New("alerte sur les logs : texte trop long (200 caractères au plus)")
+		}
+		if r.Regex {
+			if _, err := regexp.Compile(r.Pattern); err != nil {
+				return fmt.Errorf("expression régulière invalide %q : %v", r.Pattern, err)
+			}
+		}
+		if r.ID == "" {
+			r.ID = fmt.Sprintf("r%d-%d", time.Now().UnixNano()%1_000_000_000, i)
+		}
+		rules = append(rules, r)
+	}
+	s.LogRules = rules
+	return nil
+}
+
+// cleanNames retire les doublons et les « / » de tête, puis trie.
+func cleanNames(in []string) []string {
 	seen := map[string]bool{}
-	muted := []string{}
-	for _, m := range s.Muted {
-		m = strings.TrimSpace(strings.TrimPrefix(m, "/"))
-		if m != "" && !seen[m] && len(muted) < 200 {
+	out := []string{}
+	for _, m := range in {
+		if m = strings.TrimSpace(strings.TrimPrefix(m, "/")); m != "" && !seen[m] && len(out) < 200 {
 			seen[m] = true
-			muted = append(muted, m)
+			out = append(out, m)
 		}
 	}
-	sort.Strings(muted)
-	s.Muted = muted
-	return nil
+	sort.Strings(out)
+	return out
 }
 
 type Manager struct {
@@ -125,6 +206,13 @@ func Load(ctx context.Context, st *store.Store, cfg *config.Config) *Manager {
 		OracleWatch:  true,
 		CertDays:     14,
 		PruneImages:  true,
+
+		AutoUpdateTime: "04:00",
+		AutoUpdateList: []string{},
+		NetQuotaTB:     10,
+		NetQuotaAlert:  80,
+		LogRules:       []LogRule{},
+		WeeklyReport:   true,
 	}
 	if raw := st.Get(ctx, key); raw != "" {
 		saved := s
@@ -140,6 +228,8 @@ func (m *Manager) Get() Settings {
 	defer m.mu.RUnlock()
 	cp := m.s
 	cp.Muted = append([]string{}, m.s.Muted...)
+	cp.AutoUpdateList = append([]string{}, m.s.AutoUpdateList...)
+	cp.LogRules = append([]LogRule{}, m.s.LogRules...)
 	return cp
 }
 

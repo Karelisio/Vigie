@@ -311,7 +311,21 @@ data class AgentSettings(
     @SerialName("oracle_watch") val oracleWatch: Boolean = true,
     @SerialName("cert_days") val certDays: Int = 14,
     @SerialName("prune_images") val pruneImages: Boolean = true,
+    @SerialName("auto_update") val autoUpdate: Boolean = false,
+    @SerialName("auto_update_time") val autoUpdateTime: String = "04:00",
+    @SerialName("auto_update_all") val autoUpdateAll: Boolean = false,
+    @SerialName("auto_update_list") val autoUpdateList: List<String> = emptyList(),
+    @SerialName("auto_update_agent") val autoUpdateAgent: Boolean = false,
+    @SerialName("net_quota_tb") val netQuotaTb: Double = 10.0,
+    @SerialName("net_quota_alert") val netQuotaAlert: Int = 80,
+    @SerialName("maintenance_until") val maintenanceUntil: Long = 0,
+    @SerialName("log_rules") val logRules: List<LogRule> = emptyList(),
+    @SerialName("weekly_report") val weeklyReport: Boolean = true,
 )
+
+/** Alerte quand une ligne de log d'un conteneur contient un texte (ou correspond à une regex). */
+@Serializable
+data class LogRule(val id: String = "", val container: String = "", val pattern: String = "", val regex: Boolean = false)
 
 @Serializable
 data class MuteRequest(val muted: Boolean)
