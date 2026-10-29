@@ -238,16 +238,18 @@ type record struct {
 	CVEs      []string   `json:"c,omitempty"` // alias CVE (aliases et upstream)
 	Severity  string     `json:"sev"`         // critical, high, medium, low, unknown
 	Score     float64    `json:"sc,omitempty"`
-	Urgency   string     `json:"u,omitempty"` // urgence Debian, dernier recours pour la gravité
+	Urgency   string     `json:"u,omitempty"` // urgence Debian (« unimportant » : sans importance)
+	Priority  string     `json:"p,omitempty"` // priorité Ubuntu (« negligible » : négligeable)
 	Affected  []affected `json:"a,omitempty"`
 	Missing   bool       `json:"x,omitempty"` // fiche introuvable ou illisible
 	Withdrawn bool       `json:"w,omitempty"` // retirée par OSV
 }
 
 type affected struct {
-	Eco    string    `json:"e"`
-	Name   string    `json:"n"`
-	Ranges [][]event `json:"r,omitempty"`
+	Eco     string    `json:"e"`
+	Name    string    `json:"n"`
+	Ranges  [][]event `json:"r,omitempty"`
+	Urgency string    `json:"u,omitempty"` // urgence Debian propre à cette version de la distribution
 }
 
 type event struct {
@@ -270,7 +272,11 @@ func reduce(v *osvVuln) record {
 		}
 	}
 	r.Severity, r.Score = severityOf(v.Severity)
+	r.Priority = ubuntuPriority(v.Severity)
 	for _, a := range v.Affected {
+		if r.Priority == "" {
+			r.Priority = ubuntuPriority(a.Severity)
+		}
 		if r.Severity == "unknown" {
 			r.Severity, r.Score = severityOf(a.Severity)
 		}
@@ -280,7 +286,7 @@ func reduce(v *osvVuln) record {
 		if !keptEcosystems[ecoBase(a.Package.Ecosystem)] || len(r.Affected) >= maxAffected {
 			continue
 		}
-		aff := affected{Eco: a.Package.Ecosystem, Name: a.Package.Name}
+		aff := affected{Eco: a.Package.Ecosystem, Name: a.Package.Name, Urgency: a.EcosystemSpecific.Urgency}
 		for _, rg := range a.Ranges {
 			if rg.Type != "ECOSYSTEM" && rg.Type != "SEMVER" {
 				continue
@@ -370,6 +376,16 @@ func severityOf(list []osvSeverity) (string, float64) {
 		}
 	}
 	return "unknown", 0
+}
+
+// ubuntuPriority renvoie la priorité Ubuntu d'une fiche (« » si absente).
+func ubuntuPriority(list []osvSeverity) string {
+	for _, s := range list {
+		if s.Type == "Ubuntu" {
+			return strings.ToLower(strings.TrimSpace(s.Score))
+		}
+	}
+	return ""
 }
 
 // levelOf traduit une gravité textuelle (GitHub, Ubuntu, Debian…) ; « unknown » si absente ou inconnue.

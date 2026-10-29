@@ -36,6 +36,8 @@ data class VulnCounts(
     val unknown: Int = 0,
     /** Failles avec une version corrigée. */
     val fixable: Int = 0,
+    /** Failles jugées sans importance par la distribution (agent 0.7.1) : hors du total. */
+    val negligible: Int = 0,
 ) {
     val total: Int get() = critical + high + medium + low + unknown
 
@@ -60,12 +62,13 @@ data class VulnTotals(
     val low: Int = 0,
     val unknown: Int = 0,
     val fixable: Int = 0,
+    val negligible: Int = 0,
     /** Images analysées. */
     val images: Int = 0,
     /** Images avec au moins une faille. */
     val vulnerable: Int = 0,
 ) {
-    val counts: VulnCounts get() = VulnCounts(critical, high, medium, low, unknown, fixable)
+    val counts: VulnCounts get() = VulnCounts(critical, high, medium, low, unknown, fixable, negligible)
 }
 
 @Serializable
@@ -99,10 +102,13 @@ data class Vuln(
     val fixed: String = "",
     val ecosystem: String = "",
     val url: String = "",
+    /** Jugée sans importance par la distribution (urgence Debian, priorité Ubuntu) ; [note] l'explique. */
+    val negligible: Boolean = false,
+    val note: String = "",
 ) {
     /** Identifiant le plus parlant : la CVE si elle existe. */
     val title: String get() = aliases.firstOrNull() ?: id
-    val fixable: Boolean get() = fixed.isNotEmpty()
+    val fixable: Boolean get() = fixed.isNotEmpty() && !negligible
 }
 
 @Serializable
@@ -148,7 +154,7 @@ data class VulnImage(
 
     /** Failles triées : les plus graves, puis celles qui ont une correction, puis le score. */
     val sorted: List<Vuln> get() = vulns.sortedWith(
-        compareBy<Vuln> { severityRank(it.severity) }.thenBy { !it.fixable }.thenByDescending { it.score }.thenBy { it.pkg },
+        compareBy<Vuln> { it.negligible }.thenBy { severityRank(it.severity) }.thenBy { !it.fixable }.thenByDescending { it.score }.thenBy { it.pkg },
     )
 }
 

@@ -73,9 +73,15 @@ type Counts struct {
 	Low      int `json:"low"`
 	Unknown  int `json:"unknown"`
 	Fixable  int `json:"fixable"` // avec une version corrigée
+	// Failles jugées sans importance par la distribution : comptées à part, hors du total.
+	Negligible int `json:"negligible"`
 }
 
 func (c *Counts) add(v Vuln) {
+	if v.Negligible {
+		c.Negligible++
+		return
+	}
 	switch v.Severity {
 	case "critical":
 		c.Critical++
@@ -93,7 +99,7 @@ func (c *Counts) add(v Vuln) {
 	}
 }
 
-// Total renvoie le nombre de failles.
+// Total renvoie le nombre de failles (hors failles sans importance).
 func (c Counts) Total() int { return c.Critical + c.High + c.Medium + c.Low + c.Unknown }
 
 // Totals : failles distinctes de toutes les images (une faille commune à deux images compte une fois).
@@ -122,6 +128,10 @@ type Vuln struct {
 	Fixed     string   `json:"fixed"`   // « » : pas de version corrigée
 	Ecosystem string   `json:"ecosystem"`
 	URL       string   `json:"url"`
+	// Negligible : la distribution juge la faille sans importance (urgence Debian « unimportant »,
+	// priorité Ubuntu « negligible ») ; Note l'explique. Ni comptée, ni alertée, ni corrigée.
+	Negligible bool   `json:"negligible,omitempty"`
+	Note       string `json:"note,omitempty"`
 }
 
 // Image est le résultat de l'analyse d'une image.
@@ -160,7 +170,7 @@ func fixesOf(all []Vuln) []Fix {
 	index := map[[3]string]int{}
 	out := []Fix{}
 	for _, v := range all {
-		if v.Fixed == "" {
+		if v.Fixed == "" || v.Negligible {
 			continue
 		}
 		k := [3]string{v.Ecosystem, v.Package, v.Version}
@@ -227,7 +237,8 @@ func (c Counts) CountAtLeast(level string) int {
 
 // Plus additionne deux décomptes.
 func (c Counts) Plus(o Counts) Counts {
-	return Counts{c.Critical + o.Critical, c.High + o.High, c.Medium + o.Medium, c.Low + o.Low, c.Unknown + o.Unknown, c.Fixable + o.Fixable}
+	return Counts{c.Critical + o.Critical, c.High + o.High, c.Medium + o.Medium, c.Low + o.Low, c.Unknown + o.Unknown,
+		c.Fixable + o.Fixable, c.Negligible + o.Negligible}
 }
 
 // CountVulns compte une liste de failles par gravité.
@@ -1011,11 +1022,35 @@ func (r *record) vuln(eco, name, version string) Vuln {
 	if sev == "" {
 		sev = "unknown"
 	}
-	return Vuln{
+	v := Vuln{
 		ID: r.ID, Aliases: aliases, Summary: r.Summary, Severity: sev, Score: r.Score,
 		Package: name, Version: version, Fixed: r.fixedFor(eco, name, version), Ecosystem: eco,
 		URL: "https://osv.dev/vulnerability/" + r.ID,
 	}
+	v.Negligible, v.Note = r.negligible(eco, name)
+	return v
+}
+
+// negligible : la distribution de l'image juge la faille sans importance (souvent contestée, ou sans
+// effet pratique), quelle que soit la note CVSS publiée ailleurs.
+func (r *record) negligible(eco, name string) (bool, string) {
+	switch ecoBase(eco) {
+	case "Debian":
+		urgency := r.Urgency
+		for _, a := range r.Affected {
+			if a.Name == name && a.Eco == eco && a.Urgency != "" {
+				urgency = a.Urgency // celle de la version de Debian de l'image l'emporte
+			}
+		}
+		if strings.EqualFold(urgency, "unimportant") {
+			return true, "Sans importance selon Debian"
+		}
+	case "Ubuntu":
+		if strings.EqualFold(r.Priority, "negligible") {
+			return true, "Négligeable selon Ubuntu"
+		}
+	}
+	return false, ""
 }
 
 // dropCoveredAdvisories retire les bulletins regroupant plusieurs CVE (DSA, DLA, USN…) quand chacune
@@ -1055,6 +1090,9 @@ func dropCoveredAdvisories(list []Vuln, records map[string]*record) []Vuln {
 func sortVulns(list []Vuln) {
 	sort.SliceStable(list, func(i, j int) bool {
 		a, b := list[i], list[j]
+		if a.Negligible != b.Negligible {
+			return b.Negligible // les failles sans importance en dernier
+		}
 		if ra, rb := severityRank[a.Severity], severityRank[b.Severity]; ra != rb {
 			return ra < rb
 		}

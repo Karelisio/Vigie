@@ -137,19 +137,68 @@ private fun actionLabel(a: String) = when (a) {
     "check.create" -> "Check ajouté"
     "check.update" -> "Check modifié"
     "check.delete" -> "Check supprimé"
-    else -> a
+    "résultat" -> "Résultat"
+    "update" -> "Mise à jour"
+    "update-auto" -> "Mise à jour automatique"
+    "update-all" -> "Tout mettre à jour"
+    "pull" -> "Téléchargement de l'image"
+    "rollback" -> "Retour à la version précédente"
+    "rollback-unignore" -> "Version de nouveau proposée"
+    "cleanup" -> "Nettoyage du disque"
+    "backup" -> "Sauvegarde"
+    "backup.config" -> "Réglages des sauvegardes"
+    "vulns.scan" -> "Analyse des failles"
+    "vulnfix" -> "Correction des failles"
+    "vulnfix-all" -> "Correction de toutes les images"
+    "maintenance" -> "Maintenance"
+    "settings" -> "Réglages"
+    "channels" -> "Canaux d'alerte"
+    "debrid" -> "Comptes debrid"
+    "statuspage" -> "Page d'état"
+    "statuspage-regenerate" -> "Nouveau lien de page d'état"
+    "token-create" -> "Accès partagé créé"
+    "token-revoke" -> "Accès partagé révoqué"
+    else -> if (a.startsWith("stack-")) "Stack (${a.removePrefix("stack-")})" else a
+}
+
+/** Issue d'une entrée : « ok » (éventuellement suivi du bilan), « lancé(e) » (le résultat suit), sinon échec. */
+internal enum class AuditOutcome { Ok, Started, Failed }
+
+internal fun auditOutcome(result: String): AuditOutcome = when {
+    result == "ok" || result.startsWith("ok —") || result.startsWith("ok ") -> AuditOutcome.Ok
+    result == "lancé" || result == "lancée" -> AuditOutcome.Started
+    else -> AuditOutcome.Failed
 }
 
 @Composable
 private fun AuditRow(e: AuditEntry, modifier: Modifier) {
-    val ok = e.result == "ok"
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = modifier.fillMaxWidth()) {
+    val outcome = auditOutcome(e.result)
+    val scheme = MaterialTheme.colorScheme
+    Surface(shape = RoundedCornerShape(20.dp), color = scheme.surfaceContainer, modifier = modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${actionLabel(e.action)} · ${e.target}", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                Text(if (ok) "OK" else "Échec", style = MaterialTheme.typography.labelMedium, color = if (ok) Vigie.status.ok else Vigie.status.critical)
+                Text(
+                    when (outcome) {
+                        AuditOutcome.Ok -> "OK"
+                        AuditOutcome.Started -> "Lancé"
+                        AuditOutcome.Failed -> "Échec"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = when (outcome) {
+                        AuditOutcome.Ok -> Vigie.status.ok
+                        AuditOutcome.Started -> scheme.onSurfaceVariant
+                        AuditOutcome.Failed -> Vigie.status.critical
+                    },
+                )
             }
-            if (!ok) Text(e.result, style = MaterialTheme.typography.bodySmall, color = Vigie.status.critical)
+            when (outcome) {
+                AuditOutcome.Ok -> e.result.removePrefix("ok").trimStart(' ', '—').takeIf { it.isNotEmpty() }?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                }
+                AuditOutcome.Started -> Unit
+                AuditOutcome.Failed -> Text(e.result, style = MaterialTheme.typography.bodySmall, color = Vigie.status.critical)
+            }
             Text(
                 "${Fmt.dateTime(e.ts)} · ${e.ip}" + if (e.ua.isNotBlank()) " · ${e.ua.substringBefore(' ')}" else "",
                 style = MaterialTheme.typography.labelSmall,

@@ -507,7 +507,9 @@ private fun SummaryCard(r: VulnReport, now: Long, starting: Boolean, onScan: () 
             Spacer(Modifier.height(4.dp))
             val images = if (t.images == 1) "1 image analysée" else "${t.images} images analysées"
             Text(
-                "$images · ${Fmt.ago(r.lastScan, now)}" + if (t.unknown > 0) " · ${t.unknown} de gravité inconnue" else "",
+                "$images · ${Fmt.ago(r.lastScan, now)}" +
+                    (if (t.unknown > 0) " · ${t.unknown} de gravité inconnue" else "") +
+                    (if (t.negligible > 0) " · ${t.negligible} sans importance, non comptées" else ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant,
             )
@@ -606,6 +608,9 @@ private fun ImageCard(
                     Chip(severityPlural(sev, n), c.container, c.content)
                 }
             }
+            if (img.counts.negligible > 0) {
+                Chip("${img.counts.negligible} sans importance", scheme.surfaceContainerHighest, scheme.onSurfaceVariant)
+            }
             if (img.counts.fixable > 0) {
                 Chip(
                     if (img.counts.fixable == 1) "1 corrigeable" else "${img.counts.fixable} corrigeables",
@@ -665,7 +670,7 @@ private fun ImageCard(
 private fun VulnRow(v: Vuln, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val status = Vigie.status
-    val c = severityColors(v.severity)
+    val c = if (v.negligible) SeverityColors(scheme.surfaceContainerHighest, scheme.onSurfaceVariant, scheme.outline) else severityColors(v.severity)
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
@@ -675,8 +680,11 @@ private fun VulnRow(v: Vuln, onClick: () -> Unit) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
             Surface(color = c.container, contentColor = c.content, shape = RoundedCornerShape(10.dp), modifier = Modifier.width(64.dp)) {
                 Column(Modifier.padding(vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(severityLabel(v.severity), style = MaterialTheme.typography.labelSmall, maxLines = 1, textAlign = TextAlign.Center)
-                    if (v.score > 0) {
+                    Text(
+                        if (v.negligible) "Mineure" else severityLabel(v.severity),
+                        style = MaterialTheme.typography.labelSmall, maxLines = 1, textAlign = TextAlign.Center,
+                    )
+                    if (v.score > 0 && !v.negligible) {
                         Text(String.format(java.util.Locale.FRANCE, "%.1f", v.score), style = MaterialTheme.typography.titleSmall.numeric())
                     }
                 }
@@ -685,7 +693,11 @@ private fun VulnRow(v: Vuln, onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(v.pkg, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    if (v.fixable) "${v.version} → ${v.fixed}" else "${v.version} · pas encore corrigée",
+                    when {
+                        v.negligible -> "${v.version} · ${v.note.ifEmpty { "sans importance" }}"
+                        v.fixable -> "${v.version} → ${v.fixed}"
+                        else -> "${v.version} · pas encore corrigée"
+                    },
                     style = MaterialTheme.typography.bodySmall.numeric(),
                     color = if (v.fixable) status.ok else scheme.onSurfaceVariant,
                     maxLines = 2,

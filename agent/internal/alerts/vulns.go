@@ -15,7 +15,7 @@ const vulnKey = "vuln_alerts"
 // vulnQualifies : faille au moins du niveau choisi (critical, ou high qui inclut critical) et corrigée
 // dans une version plus récente du paquet.
 func vulnQualifies(v vulns.Vuln, level string) bool {
-	if v.Fixed == "" {
+	if v.Fixed == "" || v.Negligible {
 		return false
 	}
 	switch level {

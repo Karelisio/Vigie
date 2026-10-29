@@ -272,3 +272,41 @@ func TestLevels(t *testing.T) {
 		t.Fatalf("résumé tronqué : %d", len([]rune(s)))
 	}
 }
+
+// Faille contestée : note CVSS critique ailleurs, mais sans importance pour Debian (selon la version) et
+// négligeable pour Ubuntu.
+func TestNegligibleVulns(t *testing.T) {
+	r := reduce(decodeVuln(t, `{
+  "id": "DEBIAN-CVE-2019-1010022", "upstream": ["CVE-2019-1010022"],
+  "severity": [{"type": "CVSS_V3", "score": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+  "affected": [
+    {"package": {"ecosystem": "Debian:12", "name": "glibc"}, "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}], "ecosystem_specific": {"urgency": "low"}},
+    {"package": {"ecosystem": "Debian:13", "name": "glibc"}, "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}], "ecosystem_specific": {"urgency": "unimportant"}}
+  ]}`))
+	if r.Severity != "critical" {
+		t.Fatalf("gravité CVSS : %+v", r)
+	}
+	v13, v12 := r.vuln("Debian:13", "glibc", "2.41-12"), r.vuln("Debian:12", "glibc", "2.36-9")
+	if !v13.Negligible || v13.Note != "Sans importance selon Debian" || v12.Negligible {
+		t.Fatalf("Debian 13 : %+v / Debian 12 : %+v", v13, v12)
+	}
+	u := reduce(decodeVuln(t, `{"id": "UBUNTU-CVE-2019-1010022", "severity": [{"type": "Ubuntu", "score": "negligible"}],
+  "affected": [{"package": {"ecosystem": "Ubuntu:24.04:LTS", "name": "glibc"}, "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}]}]}`))
+	if v := u.vuln("Ubuntu:24.04:LTS", "glibc", "2.39"); !v.Negligible || v.Note != "Négligeable selon Ubuntu" {
+		t.Fatalf("Ubuntu : %+v", v)
+	}
+
+	// Ni comptée, ni proposée à la correction, et listée en dernier.
+	critical := Vuln{ID: "A", Severity: "high", Package: "x", Fixed: "2"}
+	list := []Vuln{v13, critical}
+	sortVulns(list)
+	c := CountVulns(list)
+	if list[0].ID != "A" || c.Total() != 1 || c.Negligible != 1 || c.Critical != 0 {
+		t.Fatalf("tri %v, décompte %+v", list, c)
+	}
+	nf := v13
+	nf.Fixed = "2.41-13"
+	if fixes := fixesOf([]Vuln{nf}); len(fixes) != 0 {
+		t.Fatalf("correction proposée pour une faille sans importance : %+v", fixes)
+	}
+}

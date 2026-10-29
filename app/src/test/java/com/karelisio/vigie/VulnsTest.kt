@@ -118,4 +118,19 @@ class VulnsTest {
         assertTrue(Vuln(fixed = "1.2").fixable)
         assertEquals("GHSA-x", Vuln(id = "GHSA-x").title)
     }
+
+    @Test
+    fun negligibleVulnsAreSetApart() {
+        val json = """{"id":"sha256:1","ref":"comet","counts":{"critical":0,"high":1,"medium":0,"low":0,"unknown":0,"fixable":1,"negligible":2},
+            "vulns":[{"id":"DEBIAN-CVE-2019-1010022","severity":"critical","score":9.8,"package":"glibc","version":"2.41","fixed":"",
+            "negligible":true,"note":"Sans importance selon Debian"},{"id":"X","severity":"high","package":"openssl","version":"3","fixed":"3.1"}]}"""
+        val img = VigieJson.decodeFromString(VulnImage.serializer(), json)
+        assertEquals(1, img.counts.total)
+        assertEquals(2, img.counts.negligible)
+        assertEquals("X", img.sorted.first().id)
+        val minor = img.sorted.last()
+        assertTrue(minor.negligible)
+        assertEquals("Sans importance selon Debian", minor.note)
+        assertFalse(minor.copy(fixed = "2.42").fixable)
+    }
 }

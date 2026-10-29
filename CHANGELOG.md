@@ -2,6 +2,11 @@
 
 Le workflow de release publie la section correspondant au tag (`## [X.Y.Z]`).
 
+## [0.7.1]
+
+- Failles connues : celles que Debian ou Ubuntu jugent sans importance (souvent contestées, comme CVE-2019-1010022 sur glibc) sont rangées à part, en fin de liste, sans être comptées, alertées ni corrigées, même si leur note CVSS est élevée. Relance une analyse après la mise à jour de l'agent pour en profiter.
+- Journal des actions : les opérations lancées et réussies n'apparaissent plus à tort en « Échec » ; le bilan s'affiche, les actions ont des noms lisibles.
+
 ## [0.7.0]
 
 - Correction des failles connues : pour chaque image vulnérable, Vigie choisit la meilleure voie et l'explique (Réglages → Sécurité du serveur → Failles connues).
